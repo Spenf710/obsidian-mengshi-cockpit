@@ -486,14 +486,21 @@ function ProjectsPanel({ app }: { app: App }) {
     });
   }, [app, refreshKey]);
 
-  // 未配置项目根目录（新用户零配置）→ 引导到设置页
+  // 未配置项目根目录（新用户零配置）→ 提供直接新建入口（无需先进设置）
   const noRoots = (getConfig().projectRoots ?? []).length === 0;
   if (noRoots) {
     return (
       <div className="mswb-placeholder">
         <div className="mswb-placeholder-icon" style={{ fontSize: 32 }}>📂</div>
         <p style={{ margin: '0 0 8px' }}>尚未配置项目根目录</p>
-        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>请在「设置 → 猛士驾驶舱 → 项目根目录」添加你的项目管理文件夹</p>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>可直接新建项目（自动创建存放文件夹），或在「设置 → 猛士驾驶舱 → 项目根目录」手动添加</p>
+        <button
+          className="mswb-sort-btn active"
+          style={{ marginTop: 16, padding: '6px 24px' }}
+          onClick={() => new CreateProjectModal(app).open()}
+        >
+          🆕 新建项目
+        </button>
       </div>
     );
   }
@@ -547,7 +554,14 @@ function ProjectsPanel({ app }: { app: App }) {
       <div className="mswb-placeholder">
         <div className="mswb-placeholder-icon" style={{ fontSize: 32 }}>📂</div>
         <p>未发现项目</p>
-        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>在项目根目录下新建项目文件夹，或用右侧「🆕 新建项目」创建</p>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>可直接新建项目（自动创建项目文件夹），或在现有项目文件夹下放 README 后手动刷新</p>
+        <button
+          className="mswb-sort-btn active"
+          style={{ marginTop: 16, padding: '6px 24px' }}
+          onClick={() => new CreateProjectModal(app).open()}
+        >
+          🆕 新建项目
+        </button>
       </div>
     );
   }

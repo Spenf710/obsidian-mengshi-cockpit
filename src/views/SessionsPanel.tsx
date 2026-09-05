@@ -472,7 +472,7 @@ export function SessionsPanel({ app }: { app: App }) {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [archivedIds, setArchivedIds] = useState<Set<string>>(new Set());
   const [archivedOnly, setArchivedOnly] = useState<ArchivedSessionSummary[]>([]); // 仅存档会话（源文件已被清理）
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set(getConfig().projectRoots)); // 默认全部收起（清爽界面），点击展开
   const [titleOverrides, setTitleOverrides] = useState<Record<string, string>>({});
   const [sessionProjectOverrides, setSessionProjectOverrides] = useState<Record<string, string | null>>({});
   const [moveTarget, setMoveTarget] = useState<SessionCard | null>(null);

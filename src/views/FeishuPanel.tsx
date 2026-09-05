@@ -40,7 +40,7 @@ import {
   type DriveFile,
   DRIVE_SCAN_CACHE_MS,
 } from '../data/feishuScanner';
-import { getFeishuConfig, setFeishuConfig } from '../data/settings';
+import { getFeishuConfig, setFeishuConfig, getConfig } from '../data/settings';
 import { PROJECT_META, scanProjects } from '../data/projectScanner';
 
 // ===== 数据源类型 =====
@@ -236,9 +236,7 @@ export function FeishuPanel({ app }: { app: App }) {
   };
 
   /** 获取所有项目键列表（用于移动弹窗选项，包含待分配，排除当前所在分组） */
-  const allProjectKeys = useMemo(() => {
-    return projectGroups.map((g) => ({ key: g.key, emoji: g.emoji, name: g.name }));
-  }, [projectGroups]);
+  // ⚠️ TDZ：依赖 rootFallbackMap，必须在其声明之后定义（否则飞书面板白屏）
 
   // Wiki 状态
   const [spaces, setSpaces] = useState<FeishuSpace[]>([]);
@@ -288,10 +286,38 @@ export function FeishuPanel({ app }: { app: App }) {
     setSource(s);
   };
 
+  // 项目文件夹 → 所属根目录的同步映射（旧缓存无 treeRoot 字段时兜底归类用）
+  // 与 scanProjects 的扫描规则一致：从每个 projectRoot 下提取一级子文件夹
+  const rootFallbackMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const root of getConfig().projectRoots) {
+      const rootPath = root + '/';
+      for (const file of app.vault.getFiles()) {
+        if (file.path.startsWith(rootPath)) {
+          const sub = file.path.slice(rootPath.length).split('/')[0];
+          if (sub) m.set(sub, root);
+        }
+      }
+    }
+    return m;
+  }, [app]);
+
+  /** 获取所有项目键列表（用于移动弹窗选项，包含待分配，排除当前所在分组） */
+  // ⚠️ TDZ：必须声明在 rootFallbackMap 之后（其回调体内引用 rootFallbackMap）
+  const allProjectKeys = useMemo(() => {
+    return projectGroups.map((g) => ({
+      key: g.key,
+      emoji: g.emoji,
+      name: g.name,
+      treeRoot: g.treeRoot || rootFallbackMap.get(g.key) || '其他',
+    }));
+  }, [projectGroups, rootFallbackMap]);
+
   // 第一阶段：扫描 vault，立即显示项目骨架
   const buildProjectSkeleton = useCallback(async () => {
     const vaultProjects = (await scanProjects(app)).map((p) => ({
       folderName: p.folderName, name: p.name, emoji: p.emoji, systemType: p.systemType,
+      treeRoot: p.source,   // projectRoots 来源根目录，供项目 Tab 树形分组
     }));
     const metaProjects = Object.entries(PROJECT_META).map(([key, m]) => ({
       key, emoji: m.emoji, name: m.name, systemType: m.systemType,
@@ -313,6 +339,7 @@ export function FeishuPanel({ app }: { app: App }) {
       } else {
         const emptyGroups: DriveProjectGroup[] = projectList.map((p) => ({
           key: p.key, emoji: p.emoji, name: p.name, files: [],
+          treeRoot: p.treeRoot,
         }));
         setProjectGroups(emptyGroups);
         setSelectedProject(emptyGroups[0]?.key || null);
@@ -518,6 +545,7 @@ export function FeishuPanel({ app }: { app: App }) {
                   lastSync={lastSync}
                   selectedKey={selectedProject}
                   onSelect={(key) => setSelectedProject(key)}
+                  rootFallbackMap={rootFallbackMap}
                   useDrawer={true}
                 />
               ) : (
@@ -716,8 +744,8 @@ function DriveTree({ files, loading, folderStack, onEnterFolder, onNavigateBread
   );
 }
 
-// ===== Drive 项目列表（左栏）— 抽屉式按系统类别分组 =====
-function DriveProjectList({ groups, scanning, scanProgress, truncated, lastSync, selectedKey, onSelect, useDrawer = true }: {
+// ===== Drive 项目列表（左栏）— 按 vault 根目录分组（与会话面板项目 Tab 树形结构一致） =====
+function DriveProjectList({ groups, scanning, scanProgress, truncated, lastSync, selectedKey, onSelect, rootFallbackMap, useDrawer = true }: {
   groups: DriveProjectGroup[];
   scanning: boolean;
   scanProgress: { scanned: number; total: number };
@@ -725,6 +753,7 @@ function DriveProjectList({ groups, scanning, scanProgress, truncated, lastSync,
   lastSync: string | null;
   selectedKey: string | null;
   onSelect: (key: string) => void;
+  rootFallbackMap?: Map<string, string>; // 项目文件夹 → 所属根目录（旧缓存无 treeRoot 时兜底）
   useDrawer?: boolean;
 }) {
   const syncHint = lastSync ? (() => {
@@ -737,73 +766,68 @@ function DriveProjectList({ groups, scanning, scanProgress, truncated, lastSync,
     return `${Math.floor(hours / 24)}天前`;
   })() : null;
 
-  // 按系统类别组织分组
+  // 按 vault 根目录（projectRoots）分组：项目组自带 treeRoot（来源根目录），
+  // 与项目映射一致；__unassigned__ 特殊归组单独展示
   const categorizedGroups = useMemo(() => {
-    const categories: Record<string, { emoji: string; projects: DriveProjectGroup[] }> = {};
+    const roots: string[] = [];
+    const groupsByRoot = new Map<string, DriveProjectGroup[]>();
     const unassigned: DriveProjectGroup[] = [];
-
-    // 旧缓存回退：从 PROJECT_META 查 systemType（缓存升级前的数据没有 systemType 字段）
-    const systemTypeMap = new Map<string, string>();
-    for (const [key, meta] of Object.entries(PROJECT_META)) {
-      systemTypeMap.set(key, meta.systemType);
-    }
 
     for (const g of groups) {
       if (g.key === '__unassigned__') {
         unassigned.push(g);
         continue;
       }
-      // 优先用 group 上的 systemType，旧缓存回退到 PROJECT_META 查找
-      const cat = g.systemType || systemTypeMap.get(g.key) || '其他';
-      if (!categories[cat]) {
-        let emoji = '📁';
-        if (cat === 'AI智能体') emoji = '🧠';
-        else if (cat === 'RPA自动化') emoji = '📦';
-        else if (cat === '多维表') emoji = '📋';
-        else if (cat === '工具开发') emoji = '⚙';
-        else if (cat === '车型项目') emoji = '🚗';
-        categories[cat] = { emoji, projects: [] };
+      // 旧缓存兜底：无 treeRoot 的缓存分组按项目文件夹反查其所属根目录
+      const root = g.treeRoot || rootFallbackMap?.get(g.key) || '其他';
+      if (!groupsByRoot.has(root)) {
+        groupsByRoot.set(root, []);
+        roots.push(root);
       }
-      categories[cat].projects.push(g);
+      groupsByRoot.get(root)!.push(g);
     }
 
-    return { categories, unassigned };
-  }, [groups]);
+    // 根目录顺序：projectRoots 配置顺序优先，其余按出现顺序
+    // ⚠️ 不直接 delete groupsByRoot Map —— 其内容会在渲染时再次读取
+    const configRoots = getConfig().projectRoots;
+    const orderedRoots: string[] = [];
+    const seen = new Set<string>();
+    for (const r of [...configRoots, ...roots]) {
+      if (groupsByRoot.has(r) && !seen.has(r)) {
+        orderedRoots.push(r);
+        seen.add(r);
+      }
+    }
+    for (const r of groupsByRoot.keys()) {
+      if (!seen.has(r)) {
+        orderedRoots.push(r);
+        seen.add(r);
+      }
+    }
 
-  // 抽屉展开状态
+    return {
+      rootGroups: orderedRoots.map((r) => ({ root: r, projects: groupsByRoot.get(r) || [] })),
+      unassigned,
+    };
+  }, [groups, rootFallbackMap]);
+
+  // 抽屉展开状态（按根目录）—— 默认全部收起（清爽界面），用户手动展开单个根目录
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>(() => {
-    // 默认展开第一个有项目的类别
     const init: Record<string, boolean> = {};
-    let firstSet = false;
-    for (const cat of Object.keys(categorizedGroups.categories)) {
-      if (!firstSet && categorizedGroups.categories[cat].projects.length > 0) {
-        init[cat] = true;
-        firstSet = true;
-      } else {
-        init[cat] = false;
-      }
-    }
+    for (const rg of categorizedGroups.rootGroups) init[rg.root] = false;
     return init;
   });
 
-  // 扫描完成后新增类别仍未初始化 → 补一次默认展开（首次无缓存场景）
+  // 扫描完成后新增根目录仍未初始化 → 补一次默认收起（首次无缓存场景）
   React.useEffect(() => {
-    if (Object.keys(expanded).length > 0) return; // 已有状态（含用户手动折叠）不覆盖
+    if (Object.keys(expanded).length > 0) return; // 已有状态（含用户手动展开）不覆盖
     const init: Record<string, boolean> = {};
-    let firstSet = false;
-    for (const cat of Object.keys(categorizedGroups.categories)) {
-      if (!firstSet && categorizedGroups.categories[cat].projects.length > 0) {
-        init[cat] = true;
-        firstSet = true;
-      } else {
-        init[cat] = false;
-      }
-    }
+    for (const rg of categorizedGroups.rootGroups) init[rg.root] = false;
     if (Object.keys(init).length > 0) setExpanded(init);
   }, [categorizedGroups]);
 
-  const toggleCategory = (cat: string) => {
-    setExpanded((prev) => ({ ...prev, [cat]: !prev[cat] }));
+  const toggleCategory = (root: string) => {
+    setExpanded((prev) => ({ ...prev, [root]: !prev[root] }));
   };
 
   if (scanning) {
@@ -818,9 +842,8 @@ function DriveProjectList({ groups, scanning, scanProgress, truncated, lastSync,
   }
 
   const totalFiles = groups.reduce((s, g) => s + g.files.length, 0);
-  const catEntries = Object.entries(categorizedGroups.categories);
 
-  // 通用视图（useDrawer=false）：扁平列表，按类型显示
+  // 通用视图（useDrawer=false）：扁平列表，按类型显示（与会话面板「通用」Tab 一致）
   if (!useDrawer) {
     return (
       <>
@@ -853,35 +876,41 @@ function DriveProjectList({ groups, scanning, scanProgress, truncated, lastSync,
         {truncated && <span style={{ color: 'var(--text-warning)', marginLeft: 4 }}>（已达上限）</span>}
       </div>
 
-      {/* 抽屉式类别 */}
-      {catEntries.map(([cat, { emoji, projects }]) => {
-        const isExpanded = expanded[cat];
-        const catFileCount = projects.reduce((s, p) => s + p.files.length, 0);
-        return (
-          <div key={cat}>
-            <div
-              className="mswb-feishu-category-header"
-              onClick={() => toggleCategory(cat)}
-            >
-              <span className="mswb-feishu-category-arrow">{isExpanded ? '▼' : '▶'}</span>
-              <span className="mswb-feishu-space-icon">{emoji}</span>
-              <span className="mswb-feishu-space-name">{cat}</span>
-              <span className="mswb-badge" style={{ marginLeft: 'auto' }}>{catFileCount}</span>
-            </div>
-            {isExpanded && projects.map((g) => (
+      {/* 按根目录分组的项目（0 文件的项目组不显示，与会话面板一致） */}
+      {categorizedGroups.rootGroups
+        .filter((rg) => rg.projects.some((p) => p.files.length > 0))
+        .map(({ root, projects: rootProjects }) => {
+          const isExpanded = expanded[root] === true; // 默认全部收起，点击展开
+          const rootFileCount = rootProjects
+            .filter((p) => p.files.length > 0)
+            .reduce((s, p) => s + p.files.length, 0);
+          return (
+            <div key={root}>
               <div
-                key={g.key}
-                className={`mswb-feishu-space-item mswb-feishu-project-item ${selectedKey === g.key ? 'active' : ''}`}
-                onClick={() => onSelect(g.key)}
+                className="mswb-feishu-category-header"
+                onClick={() => toggleCategory(root)}
               >
-                <span className="mswb-feishu-space-icon">{g.emoji}</span>
-                <span className="mswb-feishu-space-name">{g.name}</span>
-                <span className="mswb-badge" style={{ marginLeft: 'auto' }}>{g.files.length}</span>
+                <span className="mswb-feishu-category-arrow">{isExpanded ? '▼' : '▶'}</span>
+                <span className="mswb-feishu-space-icon">📁</span>
+                <span className="mswb-feishu-space-name">{root}</span>
+                <span className="mswb-badge" style={{ marginLeft: 'auto' }}>{rootFileCount}</span>
               </div>
-            ))}
-          </div>
-        );
-      })}
+              {isExpanded && rootProjects
+                .filter((g) => g.files.length > 0) // 隐藏 0 文件的项目
+                .map((g) => (
+                  <div
+                    key={g.key}
+                    className={`mswb-feishu-space-item mswb-feishu-project-item ${selectedKey === g.key ? 'active' : ''}`}
+                    onClick={() => onSelect(g.key)}
+                  >
+                    <span className="mswb-feishu-space-icon">{g.emoji}</span>
+                    <span className="mswb-feishu-space-name">{g.name}</span>
+                    <span className="mswb-badge" style={{ marginLeft: 'auto' }}>{g.files.length}</span>
+                  </div>
+                ))}
+            </div>
+          );
+        })}
 
       {/* 待分配 */}
       {categorizedGroups.unassigned.map((g) => (
@@ -905,7 +934,7 @@ function DriveProjectFiles({ groups, selectedKey, onDelete, onMoveFile, allProje
   selectedKey: string | null;
   onDelete: (f: DriveFile) => void;
   onMoveFile: (f: DriveFile, targetKey: string) => void;
-  allProjectKeys: Array<{ key: string; emoji: string; name: string }>;
+  allProjectKeys: Array<{ key: string; emoji: string; name: string; treeRoot?: string }>;
   statsMap: Map<string, StatisticsInfo>;
   statsLoading: boolean;
   onLoadStats: (files: DriveFile[]) => void;
@@ -933,6 +962,29 @@ function DriveProjectFiles({ groups, selectedKey, onDelete, onMoveFile, allProje
 
   // 移动弹窗状态
   const [movingFile, setMovingFile] = React.useState<DriveFile | null>(null);
+
+  // 移动弹窗：按根目录分组展示（与会话面板移动弹窗一致）；排除当前所在分组
+  const moveRows = useMemo(() => {
+    const list = allProjectKeys.filter((p) => p.key !== selectedKey);
+    const groupMap = new Map<string, typeof list>();
+    for (const p of list) {
+      const root = p.treeRoot || '其他';
+      if (!groupMap.has(root)) groupMap.set(root, []);
+      groupMap.get(root)!.push(p);
+    }
+    // 根目录顺序：projectRoots 配置顺序优先，其余按名称；「待分配」放最后
+    // ⚠️ 用 Set 记录已排序，不 delete groupMap（渲染时还要按 key 取值）
+    const ordered: string[] = [];
+    const placed = new Set<string>();
+    for (const r of getConfig().projectRoots) if (groupMap.has(r) && !placed.has(r)) { ordered.push(r); placed.add(r); }
+    for (const r of Array.from(groupMap.keys()).sort((a, b) =>
+      a === '__unassigned__' ? 1 : b === '__unassigned__' ? -1 : a.localeCompare(b, 'zh')
+    )) if (!placed.has(r)) { ordered.push(r); placed.add(r); }
+    return ordered.map((root) => ({ root, items: groupMap.get(root) || [] })).filter((g) => g.items.length > 0);
+  }, [allProjectKeys, selectedKey]);
+
+  // 移动弹窗内目标分组也按 treeRoot 匹配：以源分组所在根目录为对照，同类文件归到同根目录的可选项目
+  // 当前实现：直接使用 allProjectKeys 的 treeRoot（由 DriveProjectList 的 rootFallbackMap 逻辑推导）
 
   return (
     <>
@@ -977,17 +1029,22 @@ function DriveProjectFiles({ groups, selectedKey, onDelete, onMoveFile, allProje
             <div className="mswb-feishu-move-title">移动文件</div>
             <div className="mswb-feishu-move-file-name">{movingFile.name}</div>
             <div className="mswb-feishu-move-list">
-              {allProjectKeys.filter((p) => p.key !== selectedKey).map((p) => (
-                <div
-                  key={p.key}
-                  className="mswb-feishu-move-item"
-                  onClick={() => {
-                    onMoveFile(movingFile, p.key);
-                    setMovingFile(null);
-                  }}
-                >
-                  <span className="mswb-feishu-space-icon">{p.emoji}</span>
-                  <span className="mswb-feishu-space-name">{p.name}</span>
+              {moveRows.map((grp) => (
+                <div key={grp.root} className="mswb-session-move-group">
+                  <div className="mswb-session-move-group-title">{grp.root}</div>
+                  {grp.items.map((p) => (
+                    <div
+                      key={p.key}
+                      className="mswb-feishu-move-item mswb-session-move-group-item"
+                      onClick={() => {
+                        onMoveFile(movingFile, p.key);
+                        setMovingFile(null);
+                      }}
+                    >
+                      <span className="mswb-feishu-space-icon">{p.emoji}</span>
+                      <span className="mswb-feishu-space-name">{p.name}</span>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>

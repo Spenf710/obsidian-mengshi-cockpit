@@ -17,7 +17,7 @@ export class CreateProjectModal extends Modal {
     super(app);
     const now = new Date();
     const roots = getConfig().projectRoots;
-    this.root = roots[0] ?? '项目管理-系统';
+    this.root = roots[0] ?? '';   // 默认取第一个已配置根目录；空则强制用户新建（含自动注册）
     this.startDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     this.endDate = addWorkingDays(this.startDate, this.workDays);
   }
@@ -31,14 +31,21 @@ export class CreateProjectModal extends Modal {
     const refreshTitle = () => { titleEl.textContent = `🆕 新建项目（#${this.getNextNumber()}）`; };
     refreshTitle();
 
-    // 存放目录
+    // 存放目录（未配置或空白时强制用户输入新目录名）
     const rootSetting = new Setting(contentEl).setName('存放目录');
+    const self = this;
     this.makeInlineDropdown(rootSetting.controlEl,
       getConfig().projectRoots, () => this.root,
       v => { this.root = v; refreshTitle(); },
       async v => {
         const cfg = getConfig();
-        if (!cfg.projectRoots.includes(v)) { cfg.projectRoots.push(v); await setConfig(cfg); }
+        // 新输入的非空目录：创建文件夹 + 自动注册进 projectRoots（无需手动进设置）
+        if (v && !cfg.projectRoots.includes(v)) {
+          cfg.projectRoots.push(v); await setConfig(cfg);
+          if (v.trim() && !self.app.vault.getAbstractFileByPath(v)) {
+            await self.app.vault.createFolder(v.trim());
+          }
+        }
       });
 
     // 项目名称 + 项目目的（并排）
@@ -168,16 +175,20 @@ export class CreateProjectModal extends Modal {
 
   private async submit(): Promise<void> {
     if (!this.name.trim()) { new Notice('请输入项目名称'); return; }
+    // ⚠️ 未配置任何根目录时：必须先在「存放目录」输入一个新的目录名（会联动创建+注册）
+    if (!this.root || !this.root.trim()) { new Notice('请先在「存放目录」选择或输入一个目录'); return; }
     const num = this.getNextNumber();
     const folderName = `${num}.${this.name.trim()}`;
-    const folderPath = `${this.root}/${folderName}`;
+    const folderPath = `${this.root.trim()}/${folderName}`;
     const readmeName = `${this.name.trim()}.README.md`;
 
     if (this.app.vault.getAbstractFileByPath(folderPath)) { new Notice(`⚠️ 目录 ${folderPath} 已存在`); return; }
-    if (!this.app.vault.getAbstractFileByPath(this.root)) await this.app.vault.createFolder(this.root);
-    if (!getConfig().projectRoots.includes(this.root)) {
-      const cfg = getConfig(); cfg.projectRoots = [...cfg.projectRoots, this.root]; await setConfig(cfg);
+    const rootName = this.root.trim();
+    if (!this.app.vault.getAbstractFileByPath(rootName)) await this.app.vault.createFolder(rootName);
+    if (!getConfig().projectRoots.includes(rootName)) {
+      const cfg = getConfig(); cfg.projectRoots = [...cfg.projectRoots, rootName]; await setConfig(cfg);
     }
+    this.root = rootName;
     this.endDate = addWorkingDays(this.startDate, this.workDays);
 
     const content = [

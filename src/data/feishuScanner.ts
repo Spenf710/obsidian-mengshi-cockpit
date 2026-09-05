@@ -718,6 +718,7 @@ export interface DriveProjectGroup {
   name: string;
   files: DriveFile[];
   systemType?: string;
+  treeRoot?: string;          // 来源 vault 根目录（projectRoots），用于项目 Tab 树形分组
 }
 
 /** 太通用、匹配噪音大的关键词 */
@@ -773,12 +774,13 @@ export interface ProjectMapEntry {
   name: string;
   keywords: string[];
   systemType?: string;
+  treeRoot?: string;          // 来源 vault 根目录（projectRoots），供项目 Tab 树形分组
 }
 
 /** 合并 PROJECT_META + vault 自动扫描的项目（vault 优先，META 仅补充 emoji/name/systemType） */
 export function mergeProjectMaps(
   metaProjects: Array<{ key: string; emoji: string; name: string; systemType?: string }>,
-  scannedProjects: Array<{ folderName: string; name: string; emoji: string; systemType?: string }>,
+  scannedProjects: Array<{ folderName: string; name: string; emoji: string; systemType?: string; treeRoot?: string }>,
 ): ProjectMapEntry[] {
   const map = new Map<string, ProjectMapEntry>();
   // 先建 META 索引（查 emoji/name/systemType 用）
@@ -794,6 +796,7 @@ export function mergeProjectMaps(
       name: meta?.name || s.name,
       keywords: extractKeywords(meta?.name || s.name),
       systemType: s.systemType || meta?.systemType || '其他',
+      treeRoot: s.treeRoot,
     });
   }
 
@@ -956,9 +959,13 @@ export async function deepScanDriveFiles(
 /** 按 Obsidian 项目分组所有云盘文件 */
 export function groupDriveByProject(allFiles: DriveFile[], projectList: ProjectMapEntry[], fileOverrides?: Record<string, string>): DriveProjectGroup[] {
   const map = new Map<string, DriveFile[]>();
+  const projectRootMap = new Map<string, string>();
 
   // 初始化项目桶
-  for (const proj of projectList) map.set(proj.key, []);
+  for (const proj of projectList) {
+    map.set(proj.key, []);
+    if (proj.treeRoot) projectRootMap.set(proj.key, proj.treeRoot);
+  }
   for (const cat of GENERIC_CATEGORIES) map.set(cat.key, []);
 
   // 项目视图归类：仅可分类文件参与项目匹配，不可分类文件直接跳过（不展示）
@@ -992,10 +999,18 @@ export function groupDriveByProject(allFiles: DriveFile[], projectList: ProjectM
     }
   }
 
-  // 构建结果 — 所有项目都显示，即使 0 个文件
+  // 构建结果 — 所有项目都显示，即使 0 个文件（UI 树形展示时由面板过滤 0 文件项目）
+  // treeRoot 取自项目来源根目录（mergeProjectMaps 透传 scanProjects 的 source）
   const groups: DriveProjectGroup[] = [];
   for (const proj of projectList) {
-    groups.push({ key: proj.key, emoji: proj.emoji, name: proj.name, files: map.get(proj.key) || [], systemType: proj.systemType });
+    groups.push({
+      key: proj.key,
+      emoji: proj.emoji,
+      name: proj.name,
+      files: map.get(proj.key) || [],
+      systemType: proj.systemType,
+      treeRoot: projectRootMap.get(proj.key),
+    });
   }
   // 追加「待分配」分组：可分类但未匹配到任何项目的文件
   const unassignedFiles = map.get('__other__') || [];
