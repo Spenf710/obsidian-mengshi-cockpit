@@ -286,7 +286,7 @@ export function parseCodemResponseBlocks(contentJson: unknown): { blocks: TurnBl
  */
 export async function parseCodemSessionTurns(filePath: string): Promise<SessionDetail | null> {
   return new Promise((resolve) => {
-    let aiTitle = '';
+    const aiTitle = '';
     let cwd = '';
     let startTime = '';
     let lastTime = '';

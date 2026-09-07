@@ -1,4 +1,4 @@
-import { App, Modal, Setting, TFile, Notice } from 'obsidian';
+import { App, Modal, TFile, Notice } from 'obsidian';
 import { getAllCategories, getProjectMetaOverrides, getConfig } from '../data/settings';
 import { centerModalInWorkbench } from './modalHelpers';
 

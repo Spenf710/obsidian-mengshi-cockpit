@@ -82,7 +82,7 @@ export function extractExcerptKeywords(content: string): string[] {
   body = body
     .replace(/\[\[([^\]|#]+)(?:[|#][^\]]+)?\]\]/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/[*_`~#>|=\-]+/g, ' ')
+    .replace(/[*_`~#>|=-]+/g, ' ')
     .replace(/\d+(\.\d+)?/g, ' ')
     .replace(/[^\w一-鿿\s]/g, ' ');
   const chinese = body.match(/[一-鿿]{2,}/g) ?? [];
@@ -109,7 +109,7 @@ export function buildExcerpt(content: string): string {
   body = body
     .replace(/\[\[([^\]|#]+)(?:[|#][^\]]+)?\]\]/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/[*_`~#>|=\-]+/g, '')
+    .replace(/[*_`~#>|=-]+/g, '')
     .replace(/```[\s\S]*?```/g, '')
     .replace(/\n+/g, ' ')
     .replace(/\s+/g, ' ')

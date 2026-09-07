@@ -33,7 +33,6 @@ export class CreateProjectModal extends Modal {
 
     // 存放目录（未配置或空白时强制用户输入新目录名）
     const rootSetting = new Setting(contentEl).setName('存放目录');
-    const self = this;
     this.makeInlineDropdown(rootSetting.controlEl,
       getConfig().projectRoots, () => this.root,
       v => { this.root = v; refreshTitle(); },
@@ -42,8 +41,8 @@ export class CreateProjectModal extends Modal {
         // 新输入的非空目录：创建文件夹 + 自动注册进 projectRoots（无需手动进设置）
         if (v && !cfg.projectRoots.includes(v)) {
           cfg.projectRoots.push(v); await setConfig(cfg);
-          if (v.trim() && !self.app.vault.getAbstractFileByPath(v)) {
-            await self.app.vault.createFolder(v.trim());
+          if (v.trim() && !this.app.vault.getAbstractFileByPath(v)) {
+            await this.app.vault.createFolder(v.trim());
           }
         }
       });

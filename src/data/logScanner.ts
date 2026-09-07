@@ -1,4 +1,4 @@
-import { App, TFile } from 'obsidian';
+import { App } from 'obsidian';
 import { getConfig } from './settings';
 
 // ===== 类型 =====

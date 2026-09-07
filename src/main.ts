@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, Notice, addIcon } from 'obsidian';
+import { Plugin, WorkspaceLeaf, addIcon } from 'obsidian';
 import { WorkbenchView, VIEW_TYPE } from './views/WorkbenchView';
 import { initSettings } from './data/settings';
 import { WorkbenchSettingsTab } from './views/SettingsTab';
@@ -31,7 +31,7 @@ export default class MengshiWorkbenchPlugin extends Plugin {
     this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new WorkbenchView(leaf));
 
     // 左侧 Ribbon 按钮
-    this.addRibbonIcon('mengshi-logo', '猛士驾驶舱', (evt: MouseEvent) => {
+    this.addRibbonIcon('mengshi-logo', '猛士驾驶舱', () => {
       this.activateView();
     });
 

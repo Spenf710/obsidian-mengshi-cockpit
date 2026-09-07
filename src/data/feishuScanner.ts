@@ -7,7 +7,7 @@
 
 import { exec } from 'child_process';
 import * as fs from 'fs';
-import { getFeishuConfig, type FeishuConfig } from './settings';
+import { getFeishuConfig } from './settings';
 
 // ===== 超时包装 =====
 /** 给 Promise 加硬超时，防止 Electron 环境下 exec timeout 失效导致永久卡死 */
@@ -190,11 +190,6 @@ function execLarkCli(args: string[], timeoutMs: number = 15000): Promise<LarkCli
   return _execLarkCli(args, timeoutMs, true);
 }
 
-/** 执行 lark-cli 并返回 JSON — 不检查 ok 字段（适用于 auth status 等非 API 命令） */
-function execLarkCliRaw(args: string[], timeoutMs: number = 15000): Promise<LarkCliResult> {
-  return _execLarkCli(args, timeoutMs, false);
-}
-
 function _execLarkCli(args: string[], timeoutMs: number, checkOk: boolean): Promise<LarkCliResult> {
   return withTimeout(new Promise<LarkCliResult>((resolve) => {
     const rawPath = _cachedCliPath;
@@ -203,7 +198,6 @@ function _execLarkCli(args: string[], timeoutMs: number, checkOk: boolean): Prom
     // __npx__ 模式：用 npx @larksuite/cli 执行
     const isNpxMode = rawPath === '__npx__';
     const cliPath = isNpxMode ? 'npx' : rawPath;
-    const npxPrefix = isNpxMode ? ['@larksuite/cli'] : [];
 
     // 构建安全命令
     const safeArgs = args.map((a) => {
@@ -726,7 +720,7 @@ const KEYWORD_BLOCKLIST = new Set(['FQ', 'SQE', 'AI', 'V1', 'V2', 'V3', 'M18', '
 
 /** 从项目名自动提取关键词（含中文 n-gram 子串） */
 function extractKeywords(projectName: string): string[] {
-  const parts = projectName.split(/[\s·\-\/]+/).filter((p) => p.length > 0);
+  const parts = projectName.split(/[\s·/-]+/).filter((p) => p.length > 0);
   const keywords: string[] = [];
 
   for (const p of parts) {
@@ -859,25 +853,6 @@ export function groupDriveByType(allFiles: DriveFile[]): DriveProjectGroup[] {
 
   // 通用分类保持定义顺序
   return groups;
-}
-
-function matchGeneric(name: string): string {
-  // 图片优先单独归类
-  if (isImageFile(name)) return '__image__';
-
-  const n = name.toLowerCase();
-  let bestKey = '__other__';
-  let bestLen = 0;
-  for (const cat of GENERIC_CATEGORIES) {
-    if (cat.keywords.length === 0) continue;
-    for (const kw of cat.keywords) {
-      if (kw.length > bestLen && n.includes(kw.toLowerCase())) {
-        bestKey = cat.key;
-        bestLen = kw.length;
-      }
-    }
-  }
-  return bestKey;
 }
 
 /** 深度遍历云盘根目录所有子文件夹，收集全部文件。

@@ -9,8 +9,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
-import { getSessionRootDir, getSessionArchiveDir, getHarvestSkillNames as getHarvestSkillNamesConfig } from './settings';
+import { getSessionRootDir, getHarvestSkillNames as getHarvestSkillNamesConfig } from './settings';
 
 // ===== 扫描缓存（性能优化：增量扫描） =====
 // 记录每个 .jsonl 文件的 文件大小 + 最后修改时间 → 未变化的文件跳过重新解析
@@ -192,7 +191,7 @@ export function extractProjectRef(
       }
     }
     // 再试核心名匹配（排除过于短的核心名避免误匹配）
-    for (const [fullName, { core, path: p }] of projectNameMap) {
+    for (const [, { core, path: p }] of projectNameMap) {
       if (core.length >= 3 && text.includes(core)) {
         return { projectPath: p, source: 'at-ref', evidence: `标题匹配「${core}」` };
       }

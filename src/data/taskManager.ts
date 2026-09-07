@@ -59,7 +59,7 @@ function genTaskFileName(title: string): string {
 }
 
 /** 新建任务初始正文模板 */
-function initialBody(title: string, project: string | null, priority: string): string {
+function initialBody(title: string, project: string | null): string {
   const projLine = project ? `> 归属项目：[[${project}]]` : '> 归属项目：（未指定）';
   return `# ${title}
 
@@ -165,7 +165,7 @@ export async function createTask(
     '---',
     '',
   ].join('\n');
-  const content = frontmatterLines + initialBody(opts.title, opts.project, opts.priority);
+  const content = frontmatterLines + initialBody(opts.title, opts.project);
 
   try {
     const file = await app.vault.create(filePath, content);

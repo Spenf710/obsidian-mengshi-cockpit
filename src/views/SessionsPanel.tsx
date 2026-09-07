@@ -13,7 +13,7 @@ import type { App } from 'obsidian';
 import { Notice } from 'obsidian';
 import { spawn } from 'child_process';
 import * as path from 'path';
-import { scanSessions, scanAllSessions, parseSessionTurns, archiveSessionFile, unarchiveSession, deleteSessionFile, getArchivedSessionIds, scanArchivedSessions, restoreSessionSource, encodeVaultPath, type SessionCard, type SessionDetail, type TurnBlock, type ArchivedSessionSummary, type SessionAgent } from '../data/sessionScanner';
+import { scanAllSessions, parseSessionTurns, archiveSessionFile, unarchiveSession, deleteSessionFile, getArchivedSessionIds, scanArchivedSessions, restoreSessionSource, encodeVaultPath, type SessionCard, type SessionDetail, type TurnBlock, type ArchivedSessionSummary, type SessionAgent } from '../data/sessionScanner';
 import { scanCodemSessions, parseCodemSessionTurns } from '../data/codemScanner';
 import { scanProjects, type ProjectInfo } from '../data/projectScanner';
 import { getSessionArchiveDir, getSessionRootDir, getSessionTitleOverride, setSessionTitleOverride, getSessionProjectOverride, setSessionProjectOverride, removeSessionOverrides, getConfig, getCodemRootDir, getCodemCliPath } from '../data/settings';
@@ -313,8 +313,6 @@ function SessionDetailView({ detail, agent, onBack, onOpenInClaude }: { detail: 
 
       <div className="mswb-session-detail-turns">
         {detail.turns.map((turn, i) => {
-          // 每个 assistant 轮次都是该轮对话的最终输出
-          const isFinalOutput = turn.role === 'assistant';
           return (
           <div
             key={i}
@@ -394,7 +392,7 @@ function SessionCardView({ card, archived, sourceMissing, titleOverride, effecti
 
   return (
     <div className={`mswb-session-card${archived ? ' archived' : ''}`}>
-      <div className="mswb-session-head" onClick={(e) => { if (!editingTitle) onOpen(card); }}>
+      <div className="mswb-session-head" onClick={() => { if (!editingTitle) onOpen(card); }}>
         {editingTitle ? (
           <input
             ref={inputRef}

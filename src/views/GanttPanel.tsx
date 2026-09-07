@@ -10,8 +10,6 @@ import {
   type GanttPhase,
 } from '../data/ganttData';
 import { getGanttOverrides, saveGanttOverride, getProjectMetaOverrides, getConfig, getDomainIcon } from '../data/settings';
-import { PROJECT_META } from '../data/projectScanner';
-import { CreateProjectModal } from './CreateProjectModal';
 import { PhaseModal, type PhaseSubmitData } from './PhaseModal';
 import { MilestoneModal, type MilestoneSubmitData } from './MilestoneModal';
 
@@ -73,12 +71,12 @@ async function loadGanttData(app: App): Promise<GanttTask[]> {
       if (readme) {
         try {
           const content = await app.vault.cachedRead(readme);
-          const m = content.match(/\*\*预计周期\*\*\s*[：:\|]\s*(\S+)\s*~\s*(\S+)/);
+          const m = content.match(/\*\*预计周期\*\*\s*[：:|]\s*(\S+)\s*~\s*(\S+)/);
           if (m) { start = m[1]; end = m[2]; }
-          const s = content.match(/\*\*当前状态\*\*\s*[：:\|]\s*(.+)/);
+          const s = content.match(/\*\*当前状态\*\*\s*[：:|]\s*(.+)/);
           if (s && s[1].trim().includes('已完成')) progress = 100;
           // 解析项目类型
-          const cat = content.match(/\*\*项目类型\*\*\s*[：:\|]\s*(\S+)/);
+          const cat = content.match(/\*\*项目类型\*\*\s*[：:|]\s*(\S+)/);
           if (cat) category = cat[1].trim();
         } catch { /* ignore */ }
       }
@@ -147,13 +145,13 @@ async function syncToReadme(
       try {
         await app.vault.process(readme, (content) => {
           // 1. 更新预计周期（支持多种冒号和分隔符）
-          const periodRe = /(\*\*预计周期\*\*\s*[：:\|]\s*)\S+\s*[~～]\s*\S+/;
+          const periodRe = /(\*\*预计周期\*\*\s*[：:|]\s*)\S+\s*[~～]\s*\S+/;
           if (periodRe.test(content)) {
             content = content.replace(periodRe, `$1${start} ~ ${end}`);
           } else {
             // 没有预计周期字段 → 在核心信息后追加
             content = content.replace(
-              /(\*\*当前状态\*\*[：:\|][^\n]*\n)/,
+              /(\*\*当前状态\*\*[：:|][^\n]*\n)/,
               `$1| **预计周期** | ${start} ~ ${end} |\n`,
             );
           }

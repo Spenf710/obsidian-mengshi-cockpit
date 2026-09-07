@@ -34,7 +34,6 @@ import {
   groupTasks,
   toggleTask as toggleTaskApi,
   type TaskItem,
-  type TaskGroup as TaskGroupType,
 } from '../data/taskScanner';
 
 // ===== 常量 =====
@@ -52,7 +51,7 @@ const TABS = [
 
 // ===== 日期格式化 =====
 function fmtShortDate(ymd: string): string {
-  const [y, m, d] = ymd.split('-');
+  const [, m, d] = ymd.split('-');
   return `${parseInt(m)}/${parseInt(d)}`;
 }
 
@@ -684,7 +683,6 @@ function ProjectCard({ project, app, dateMap, onMetaChange }: { project: Project
   const [editingTag, setEditingTag] = useState<'tag' | 'systemType' | 'emoji' | null>(null);
   const [showCustom, setShowCustom] = useState(false);
   const [customInput, setCustomInput] = useState('');
-  const [emojiInput, setEmojiInput] = useState(project.emoji);
   const menuRef = useRef<HTMLDivElement>(null);
   const emojiRef = useRef<HTMLSpanElement>(null);
 
@@ -1034,18 +1032,13 @@ function TodosPanel({ app }: { app: App }) {
   }, [tasks]);
 
   // 筛选后分组
-  const { groups, doneCount, undoneCount } = useMemo(() => {
+  const { groups } = useMemo(() => {
     const filtered = tasks.filter((t) => {
       if (!showDone && t.done) return false;
       if (filterProject && t.project !== filterProject) return false;
       return true;
     });
-    const done = filtered.filter((t) => t.done).length;
-    return {
-      groups: groupTasks(filtered),
-      doneCount: done,
-      undoneCount: filtered.length - done,
-    };
+    return { groups: groupTasks(filtered) };
   }, [tasks, showDone, filterProject]);
 
   const handleToggle = async (task: TaskItem) => {

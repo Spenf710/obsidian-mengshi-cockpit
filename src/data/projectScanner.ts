@@ -184,7 +184,7 @@ function mapTechToSystem(tech: string): string {
   return '其他';
 }
 
-function inferEmoji(tags: string[], source: string): string {
+function inferEmoji(tags: string[]): string {
   const tagSet = new Set(tags);
   if (tagSet.has('AI智能体')) return '🧠';
   if (tagSet.has('RPA自动化')) return '📦';
@@ -266,7 +266,7 @@ export async function scanProjects(app: App): Promise<ProjectInfo[]> {
         const project: ProjectInfo = {
           folderName,
           name: rawName,
-          emoji: inferEmoji(liveTags, source),
+          emoji: inferEmoji(liveTags),
           folderPath,
           readmePath: readme?.path ?? null,
           description: liveDesc || '暂无描述',

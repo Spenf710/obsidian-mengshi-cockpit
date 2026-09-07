@@ -31,14 +31,12 @@ import {
   batchGetStatistics,
   type StatisticsInfo,
   type DriveProjectGroup,
-  type ProjectMapEntry,
   type MeetingMinute,
   loadMinutes,
   type LarkConnection,
   type FeishuSpace,
   type FeishuNode,
   type DriveFile,
-  DRIVE_SCAN_CACHE_MS,
 } from '../data/feishuScanner';
 import { getFeishuConfig, setFeishuConfig, getConfig } from '../data/settings';
 import { PROJECT_META, scanProjects } from '../data/projectScanner';
@@ -1067,11 +1065,11 @@ function fmtTime(ts: string): string {
 }
 
 // ===== Drive 右侧内容 =====
-function DriveContent({ files, loading, folderStack, onEnterFolder, onNavigateBreadcrumb, onDelete, statsMap, statsLoading, onLoadStats }: {
+function DriveContent({ files, loading, folderStack, onNavigateBreadcrumb, onDelete, statsMap, statsLoading, onLoadStats }: {
   files: DriveFile[];
   loading: boolean;
   folderStack: Array<{ token: string; name: string }>;
-  onEnterFolder: (f: DriveFile) => void;
+  onEnterFolder?: (f: DriveFile) => void;
   onNavigateBreadcrumb: (index: number) => void;
   onDelete: (f: DriveFile) => void;
   statsMap: Map<string, StatisticsInfo>;
