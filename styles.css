@@ -3174,6 +3174,7 @@
 /* 入口来源 badge */
 .mswb-session-badge.entry-obsidian { color: #2e8b57; }
 .mswb-session-badge.entry-cmd { color: #8b4513; }
+.mswb-session-badge.entry-feishu { color: #3370ff; }
 
 /* 收割状态 badge：harvested=会话中出现过收割调用 */
 .mswb-session-badge.mswb-session-badge-harvest {

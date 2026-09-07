@@ -215,6 +215,8 @@ export interface SessionRaw {
   toolCalls: number;
   cwd: string;
   textChunks: string[];
+  /** CodeM：是否出现过「飞书 IM 输入：」包裹（飞书侧发起）；Claude 侧无此语义，省略即可 */
+  fromFeishu?: boolean;
   /** 会话内调用的 skill 名集合（识别日志/周报等日常操作） */
   skills: string[];
   /** 最后一次收割调用时间 ISO */

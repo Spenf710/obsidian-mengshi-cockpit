@@ -48,6 +48,8 @@ interface CodemMeta {
   userTurns: number;
   toolCalls: number;
   cwd: string;
+  /** 是否出现过「飞书 IM 输入：」包裹（user_message 原始文本含该前缀即飞书侧发起） */
+  fromFeishu: boolean;
   /** 收割状态（CodeM 斜杠技能：user_message 原文含「收割/归档/收尾」等触发词） */
   harvestStatus: HarvestStatus;
   /** 最后一次收割指令的 ISO 时间 */
@@ -121,6 +123,7 @@ export async function parseCodemSessionFile(filePath: string): Promise<SessionRa
     let userTurns = 0;
     let toolCalls = 0;
     let cwd = '';
+    let sawFeishu = false;
     const textChunks: string[] = [];
     let sawHarvestReq = false;     // 出现收割触发词
     let lastHarvestReqAt: string | null = null;
@@ -152,6 +155,8 @@ export async function parseCodemSessionFile(filePath: string): Promise<SessionRa
         } else if (t === 'user_message') {
           const text = extractText(obj.content);
           if (text) {
+            // 未提炼前先按原始文本判定发起端：含「飞书 IM 输入：」包裹 → 飞书侧发起（header.cwd 不一定可靠）
+            if (text.includes('飞书 IM 输入：')) sawFeishu = true;
             // 飞书 IM 入参包裹时抽「【原文】」作为标题，避免卡片标题显示“飞书 IM 输入：”整段模板
             const displayText = extractImOriginal(text) || text;
             // 系统注入的消息（skill 定义 / system-reminder 等）不是用户真实提问，不计轮次、不做收割判定
@@ -213,6 +218,7 @@ export async function parseCodemSessionFile(filePath: string): Promise<SessionRa
         userTurns,
         toolCalls,
         cwd,
+        fromFeishu: sawFeishu,
         textChunks,
         skills: [],
         // CodeM 无 Skill 工具；收割状态 = 是否有收割触发词
@@ -409,17 +415,17 @@ export async function parseCodemSessionTurns(filePath: string): Promise<SessionD
 // ===== 扫描入口 =====
 
 /**
- * 根据会话 jsonl 行的关键词推断发起入口。
- * CodeM 没有 Clichd 的 cwd 编码判断法，只能靠内容特征：
- *   - header.cwd = ~/CodeM/playgrounds/default         → 飞书侧启动
- *   - user_message 含「飞书 IM 输入：」前缀             → 飞书侧启动
- *   - 其余（cwd 为任意工作目录）                         → 命令行
+ * 根据会话 jsonl 的行特征推断发起入口。
+ * 代码行内注释此前写「header.cwd = playgrounds/default → 飞书」，但实测不同部署飞书 header.cwd 不定（本机为 E:/Workspace），
+ * 因此以随手可得的硬信号为准，cwd 仅作兜底：
+ *   - 会话内任意 user_message 原文含「飞书 IM 输入：」包裹 → 飞书侧启动（硬信号）
+ *   - header.cwd 命中 CodeM playgrounds 目录                       → 飞书侧启动（兼容旧版目录）
+ *   - 其余                                                          → 命令行
  */
 export function detectCodemEntrySource(meta: CodemMeta): string {
+  if (meta.fromFeishu) return '飞书';
   const cwd = (meta.cwd || '').toLowerCase();
-  const prompt = (meta.firstPrompt || '');
   if (cwd.includes('codem') && cwd.includes('playgrounds')) return '飞书';
-  if (prompt.startsWith('飞书 IM 输入')) return '飞书';
   return '命令行';
 }
 
@@ -478,6 +484,7 @@ export async function scanCodemSessions(rootDir: string, knownProjectPaths: stri
             userTurns: raw.userTurns,
             toolCalls: raw.toolCalls,
             cwd: raw.cwd,
+            fromFeishu: !!raw.fromFeishu,
             harvestStatus: raw.harvestStatus,
             lastHarvestAt: raw.lastHarvestAt,
           }

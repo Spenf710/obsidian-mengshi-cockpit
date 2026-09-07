@@ -379,6 +379,7 @@ function SessionCardView({ card, archived, sourceMissing, titleOverride, effecti
   const entryLabel: Record<string, string> = {
     Obsidian: 'Obsidian',
     '命令行': '命令行',
+    '飞书': '飞书',
   };
 
   // 项目归属标签（取项目名，不含路径，跟随 override）
@@ -433,7 +434,7 @@ function SessionCardView({ card, archived, sourceMissing, titleOverride, effecti
         <span className={`mswb-session-badge source-${card.projectRef.source}`}>
           {sourceLabel[card.projectRef.source] || card.projectRef.source}
         </span>
-        <span className={`mswb-session-badge entry-${card.entrySource === 'Obsidian' ? 'obsidian' : 'cmd'}`}>
+        <span className={`mswb-session-badge entry-${card.entrySource === 'Obsidian' ? 'obsidian' : card.entrySource === '飞书' ? 'feishu' : 'cmd'}`}>
           {entryLabel[card.entrySource] || card.entrySource}
         </span>
         {sourceMissing && (
