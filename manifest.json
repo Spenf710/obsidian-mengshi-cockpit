@@ -1,7 +1,7 @@
 {
   "id": "mengshi-workbench",
   "name": "Mengshi Cockpit",
-  "version": "0.6.7",
+  "version": "0.6.8",
   "minAppVersion": "1.7.2",
   "description": "猛士驾驶舱 — Calendar, Projects, Todos, Gantt, Feishu, Sessions integrated workbench.",
   "author": "Pengfei Sun",

@@ -1,4 +1,4 @@
-import { App, Modal, Setting, Notice } from 'obsidian';
+import { App, Modal, Setting, Notice, TextComponent } from 'obsidian';
 import { saveGanttOverride, getAllCategories, getAllTags, getConfig, setConfig, addCustomCategory, addCustomTag } from '../data/settings';
 import { addWorkingDays } from '../data/dateUtils';
 import { centerModalInWorkbench } from './modalHelpers';
@@ -85,10 +85,10 @@ export class CreateProjectModal extends Modal {
     centerModalInWorkbench(this);
   }
 
-  /** 创建并排字段 */
+  /** 创建并排字段（textCb 接收官方 TextComponent，替换自造 mock，消掉 no-unsafe 噪音） */
   private makeField(
     row: HTMLElement, label: string,
-    textCb?: ((t: ReturnType<Setting['addText']> extends (cb: infer C) => Setting ? C : never) => void) | null,
+    textCb?: ((t: TextComponent) => void) | null,
     customCb?: (ctl: HTMLElement) => void,
   ): void {
     const wrap = row.createDiv({ cls: 'mswb-modal-field' });
@@ -97,15 +97,10 @@ export class CreateProjectModal extends Modal {
     if (customCb) {
       customCb(ctl);
     } else if (textCb) {
-      const input = ctl.createEl('input', { cls: 'mswb-modal-input' });
-      // 模拟 Obsidian TextComponent
-      const mock: any = {
-        inputEl: input,
-        setValue: (v: string) => { input.value = v; return mock; },
-        setPlaceholder: (p: string) => { input.placeholder = p; return mock; },
-        onChange: (fn: (v: string) => void) => { input.addEventListener('input', () => fn(input.value)); return mock; },
-      };
-      textCb(mock);
+      // 官方 TextComponent：addText 会正确渲染到 contentEl 并挂 inputEl
+      const comp = new TextComponent(ctl);
+      comp.inputEl.addClass('mswb-modal-input');
+      textCb(comp);
     }
   }
 
@@ -119,11 +114,17 @@ export class CreateProjectModal extends Modal {
   ): void {
     const showDropdown = () => {
       const cur = getCurrent();
+      // 当前值不在选项中 → 直接进入「新增」输入态（未配置根目录时 root=''，select 只会选中
+      // 「+ 新增…」且 change 永不触发 = 用户无法输入。修复：无匹配选项直接给输入框）
+      if (!options.includes(cur)) {
+        showInput();
+        return;
+      }
       container.empty();
       const sel = container.createEl('select', { cls: 'mswb-modal-input' });
       for (const o of options) sel.createEl('option', { value: o, text: o });
       sel.createEl('option', { value: '__new__', text: '+ 新增…' });
-      sel.value = options.includes(cur) ? cur : '__new__';
+      sel.value = cur;
       sel.addEventListener('change', () => {
         if (sel.value === '__new__') showInput();
         else onSelect(sel.value);
@@ -131,10 +132,13 @@ export class CreateProjectModal extends Modal {
     };
 
     const saveAndClose = async (val: string) => {
+      if (val === '__new__' || !val.trim()) { showInput(); return; }
       onSelect(val);
-      if (!options.includes(val)) options.push(val);
-      showDropdown();
-      if (onAdd) await onAdd(val);
+      if (onAdd) { await onAdd(val.trim()); }
+      else if (!options.includes(val)) options.push(val);
+      // 有 onAdd 时目录值已由回调注册进 real config，this.root 由 onSelect 更新，
+      // 无需重建下拉；直接保持聚焦在当前输入框（已保存完成）
+      if (!onAdd) showDropdown();
     };
 
     const showInput = () => {
@@ -148,7 +152,7 @@ export class CreateProjectModal extends Modal {
           saving = true;
           await saveAndClose(input.value.trim());
         }
-        if (e.key === 'Escape') { saving = true; showDropdown(); }
+        // Esc：无选项场景下重建下拉会再次弹回输入态（死循环观感），故仅保持输入框不动
       });
       input.addEventListener('blur', async () => {
         if (saving) return;
