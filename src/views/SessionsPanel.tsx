@@ -546,6 +546,9 @@ export function SessionsPanel({ app }: { app: App }) {
   const [sessionProjectOverrides, setSessionProjectOverrides] = useState<Record<string, string | null>>({});
   const [moveTarget, setMoveTarget] = useState<SessionCard | null>(null);
   const [bulkArchiving, setBulkArchiving] = useState(false);
+  // 主列表滚动容器 ref + 进入详情前记住的滚动位置（退出详情后恢复）
+  const mainScrollRef = useRef<HTMLDivElement>(null);
+  const listScrollTopRef = useRef(0);
   // 当前 vault 绝对路径（恢复仅存档会话到源目录用）
   const vaultBasePathRef = useRef<string>('');
 
@@ -617,8 +620,20 @@ export function SessionsPanel({ app }: { app: App }) {
 
   useEffect(() => { doScan(); }, [doScan]);
 
+  // 退出详情后恢复主列表滚动位置（等列表渲染完成后恢复上次进入详情前的位置）
+  useEffect(() => {
+    if (detail || loading) return;
+    const el = mainScrollRef.current;
+    const target = listScrollTopRef.current;
+    if (el && target > 0) {
+      requestAnimationFrame(() => { el.scrollTop = target; });
+    }
+  }, [detail, loading]);
+
   // 详情
   const openDetail = useCallback(async (card: SessionCard) => {
+    // 进入详情前：记住当前主列表滚动位置（若未滚动过则记 0）
+    if (mainScrollRef.current) listScrollTopRef.current = mainScrollRef.current.scrollTop;
     setDetailLoading(true);
     setDetailError(null);
     setDetail(null);
@@ -784,14 +799,14 @@ export function SessionsPanel({ app }: { app: App }) {
   }, [detail]);
 
   // 左侧菜单项渲染：源文件会话 + 仅存档补齐会话一起统计（仅存档会显示在项目/通用切片下）
-  // path=null → 未归类；path='classified' → 已归类（任意项目归属）；其它 → 具体项目
+  // path=null → 未归类；path='classified' → 已归类（任意项目归属，排除日常）；其它 → 具体项目
   const projectCount = useCallback((path: string | null | 'classified') => {
     const srcKeys = new Set(sessions.map((s) => s.sessionId));
     const all = [...sessions, ...buildArchivedOnlyCards(archivedOnly, srcKeys)];
     const count = (s: SessionCard) => {
       const ov = sessionProjectOverrides?.[s.sessionId];
       const effective = ov !== undefined ? ov : s.projectRef.projectPath;
-      if (path === 'classified') return effective !== null;
+      if (path === 'classified') return effective !== null && effective !== '__daily__';
       if (path === null) return effective === null;
       return effective === path;
     };
@@ -864,8 +879,11 @@ export function SessionsPanel({ app }: { app: App }) {
       if (selectedProject) {
         list = list.filter((s) => effectiveProject(s) === selectedProject);
       } else if (selectedFilter === 'classified') {
-        // 已归类：归属到某个项目文件夹的会话（非 null）
-        list = list.filter((s) => effectiveProject(s) !== null);
+        // 已归类：归属到某个项目文件夹的会话（非 null，且排除手动标为日常的会话）
+        list = list.filter((s) => {
+          const p = effectiveProject(s);
+          return p !== null && p !== '__daily__';
+        });
       } else if (selectedFilter === 'none') {
         list = list.filter((s) => effectiveProject(s) === null);
       } else if (selectedFilter === 'daily' && activeAgent === 'claude') {
@@ -1341,7 +1359,7 @@ export function SessionsPanel({ app }: { app: App }) {
             </div>
 
             {/* 右侧内容 */}
-            <div className="mswb-sessions-main">
+            <div className="mswb-sessions-main" ref={mainScrollRef}>
               <div className="mswb-sessions-breadcrumb">
                 <span>会话</span>
                 <span className="mswb-sessions-breadcrumb-sep">/</span>
