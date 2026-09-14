@@ -13,6 +13,7 @@ import type { App } from 'obsidian';
 import { Notice } from 'obsidian';
 import { spawn } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
 import { scanAllSessions, parseSessionTurns, archiveSessionFile, unarchiveSession, deleteSessionFile, getArchivedSessionIds, scanArchivedSessions, restoreSessionSource, encodeVaultPath, type SessionCard, type SessionDetail, type TurnBlock, type ArchivedSessionSummary, type SessionAgent } from '../data/sessionScanner';
 import { scanCodemSessions, parseCodemSessionTurns } from '../data/codemScanner';
 import { scanProjects, type ProjectInfo } from '../data/projectScanner';
@@ -21,8 +22,13 @@ import { getSessionArchiveDir, getSessionRootDir, getSessionTitleOverride, setSe
 // ===== 类型 =====
 type SidebarTab = 'projects' | 'general';
 // 'none' 为项目 Tab 的「未归类」筛选键，运行期一直在用但原类型定义遗漏，此处补齐
-// 通用 Tab 状态筛选键：archived/unarchived（存档态）、harvested/pendingHarvest（收割态）
-type FilterKey = 'all' | 'none' | 'daily' | 'today' | 'threeDays' | 'week' | 'archived' | 'unarchived' | 'harvested' | 'pendingHarvest' | 'turn5' | 'turn20' | 'turn20plus';
+// 通用 Tab 筛选键（互斥单选：日期/轮次/未归类/日常）+ 项目 Tab 已归类/未归类/日常
+type FilterKey = 'all' | 'none' | 'classified' | 'daily' | 'today' | 'threeDays' | 'week' | 'turn5' | 'turn20' | 'turn20plus';
+
+/** 顶层存档维度筛选（跨项目/通用切片联动，仅 Claude）：all=全部 / archived=已存档 / unarchived=未存档 */
+type ArchiveFilter = 'all' | 'archived' | 'unarchived';
+/** 顶层收割维度筛选（跨项目/通用切片联动）：all=全部 / harvested=已收割 / pendingHarvest=待收割 */
+type HarvestFilter = 'all' | 'harvested' | 'pendingHarvest';
 
 /** 通用 Tab 日期筛选项（横向小按钮，一行三个） */
 const TIME_FILTERS: { key: FilterKey; label: string }[] = [
@@ -30,6 +36,7 @@ const TIME_FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'threeDays', label: '近三日' },
   { key: 'week', label: '本周' },
 ];
+const TOP_TIME_FILTERS: { key: FilterKey; label: string }[] = [{ key: 'today', label: '今日' }];
 
 /** 通用 Tab 轮次筛选项（横向小按钮，一行三个） */
 const TURN_FILTERS: { key: FilterKey; label: string }[] = [
@@ -38,17 +45,26 @@ const TURN_FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'turn20plus', label: '20+ 轮' },
 ];
 
-/** 通用 Tab 会话状态筛选项（存档态仅 Claude 有概念；收割态两个 Agent 都支持） */
-const GENERAL_STATUS_FILTERS: { key: FilterKey; icon: string; label: string; hint: string; claudeOnly?: boolean }[] = [
-  { key: 'unarchived', icon: '📭', label: '未存档', hint: '未创建存档副本的会话', claudeOnly: true },
-  { key: 'archived', icon: '📦', label: '已存档', hint: '已创建存档副本（含源文件被清理的仅存档会话）', claudeOnly: true },
-  { key: 'harvested', icon: '✅', label: '已收割', hint: '会话中出现过收割调用' },
-  { key: 'pendingHarvest', icon: '🌾', label: '待收割', hint: '从未执行过收割的会话' },
+/** 顶层状态筛选按钮组（跨项目/通用切片联动，两维双选：存档维 + 收割维）
+ *  label 精简为短词（显示在顶部标题栏，避免显示不全），完整说明在 hint */
+const STATUS_FILTERS: {
+  key: ArchiveFilter | HarvestFilter;
+  icon: string;
+  label: string;
+  hint: string;
+  claudeOnly?: boolean;
+}[] = [
+  { key: 'unarchived', icon: '📭', label: '未存', hint: '未创建存档副本的会话', claudeOnly: true },
+  { key: 'archived', icon: '📦', label: '已存', hint: '已创建存档副本（含源文件被清理的仅存档会话）', claudeOnly: true },
+  { key: 'harvested', icon: '✅', label: '已收', hint: '会话中出现过收割调用' },
+  { key: 'pendingHarvest', icon: '🌾', label: '待收', hint: '从未执行过收割的会话' },
 ];
 
 interface MenuGroup {
   root: string;
   projects: ProjectInfo[];
+  /** 根分组下所属项目会话总数（用于根目录标题右侧展示） */
+  total: number;
 }
 
 // ===== Markdown 完整渲染（支持代码块、表格、标题、列表等） =====
@@ -332,6 +348,45 @@ function SessionDetailView({ detail, agent, onBack, onOpenInClaude }: { detail: 
 }
 
 // ===== 会话卡片 =====
+
+/** 把仅存档会话（源文件已被清理）补齐为 SessionCard，与源文件会话同卡展示、同参与项目/通用/排序。
+ *  查重：源文件仍在的会话不补齐（scanArchivedSessions 已按 sessionId 去重，此处再过滤已存在的）。 */
+function buildArchivedOnlyCards(archivedOnly: ArchivedSessionSummary[], srcKeys: Set<string>): SessionCard[] {
+  return archivedOnly
+    .filter((a) => !srcKeys.has(a.sessionId))
+    .map((a) => ({
+      sessionId: a.sessionId,
+      agent: 'claude',
+      aiTitle: a.aiTitle || a.firstPrompt.slice(0, 40) || '(无标题)',
+      firstPrompt: a.firstPrompt,
+      startTime: a.startTime || a.lastTime, // 存档副本内最早时间戳（真实创建时间），供 📅 图标
+      lastTime: a.lastTime,
+      fileMTime: a.latestMTime,
+      sourceMissing: true, // 仅存档（源文件已被清理）——卡片展示「仅存档」标识
+      userTurns: a.userTurns, // 从存档副本解析的真实提问轮次
+      toolCalls: a.toolCalls, // 从存档副本解析的工具调用次数
+      cwd: '',
+      projectRef: a.projectRef, // 继承存档副本内重新匹配的项目归属（原分组）
+      filePath: a.latestPath,
+      entrySource: '命令行',
+      skills: [],
+      harvestStatus: 'none', // 仅存档会话无源文件可查收割，恒 none
+      lastHarvestAt: null,
+    }));
+}
+
+/** 按「修改时间 fileMTime」从近到远排序（无 mtime 排最后） */
+function sortByMtime(cards: SessionCard[]): SessionCard[] {
+  return [...cards].sort((a, b) => {
+    const ta = a.fileMTime ? new Date(a.fileMTime).getTime() : NaN;
+    const tb = b.fileMTime ? new Date(b.fileMTime).getTime() : NaN;
+    if (isNaN(ta) && isNaN(tb)) return 0;
+    if (isNaN(ta)) return 1;
+    if (isNaN(tb)) return -1;
+    return tb - ta;
+  });
+}
+
 function SessionCardView({ card, archived, sourceMissing, titleOverride, effectiveProjectPath, onOpen, onOpenInClaude, onArchive, onUnarchive, onDelete, onTitleChange, onMoveClick }: { card: SessionCard; archived: boolean; sourceMissing: boolean; titleOverride: string | null; effectiveProjectPath: string | null; onOpen: (c: SessionCard) => void; onOpenInClaude: (c: SessionCard) => void; onArchive: (c: SessionCard) => void; onUnarchive: (c: SessionCard) => void; onDelete: (c: SessionCard) => void; onTitleChange: (sessionId: string, title: string) => void; onMoveClick: (c: SessionCard) => void }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
@@ -424,7 +479,7 @@ function SessionCardView({ card, archived, sourceMissing, titleOverride, effecti
         )}
         <span className="mswb-session-head-actions">
           {/* 移动：Claude + CodeM 均可用（CodeM 只允许移动，不改数据文件；存档/删除保持只读隐藏） */}
-          <button className="mswb-session-icon-btn" onClick={(e) => { e.stopPropagation(); onMoveClick(card); }} title="移动项目">📂</button>
+          <button className="mswb-session-icon-btn" onClick={(e) => { e.stopPropagation(); onMoveClick(card); }} title="移动项目">🚚</button>
           {archived ? (
             <button className="mswb-session-icon-btn" onClick={(e) => { e.stopPropagation(); onUnarchive(card); }} title={sourceMissing ? '取消存档（此会话源文件已被 Claude 清理）' : '取消存档'} hidden={isCodemReadonly}>{sourceMissing ? '🗄' : '↩️'}</button>
           ) : (
@@ -435,7 +490,9 @@ function SessionCardView({ card, archived, sourceMissing, titleOverride, effecti
       </div>
       <div className="mswb-session-meta-row" onClick={() => onOpen(card)}>
         <span className="mswb-session-time">{timeLabel}</span>
-        <span className="mswb-session-messages">{sourceMissing ? '副本 · 源文件已清理' : `${card.userTurns} 轮提问 · ${card.toolCalls} 次调用`}</span>
+        <span className="mswb-session-messages">{sourceMissing
+        ? (card.userTurns > 0 ? `${card.userTurns} 轮提问 · ${card.toolCalls} 次调用 · 副本` : '副本')
+        : `${card.userTurns} 轮提问 · ${card.toolCalls} 次调用`}</span>
       </div>
       <div className="mswb-session-sub">
         {/* 收割状态徽标：harvested=会话中出现过收割调用（第二行，避免第一行拥挤） */}
@@ -476,6 +533,8 @@ export function SessionsPanel({ app }: { app: App }) {
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>('projects');
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [selectedFilter, setSelectedFilter] = useState<FilterKey>('all');
+  const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>('all');       // 顶层存档维（all/archived/unarchived）
+  const [harvestFilter, setHarvestFilter] = useState<HarvestFilter>('all');       // 顶层收割维（all/harvested/pendingHarvest）
   const [search, setSearch] = useState('');
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -724,19 +783,20 @@ export function SessionsPanel({ app }: { app: App }) {
     }
   }, [detail]);
 
-  // 左侧菜单项渲染
-  const projectCount = useCallback((path: string | null) => {
-    if (!path) return sessions.filter((s) => {
+  // 左侧菜单项渲染：源文件会话 + 仅存档补齐会话一起统计（仅存档会显示在项目/通用切片下）
+  // path=null → 未归类；path='classified' → 已归类（任意项目归属）；其它 → 具体项目
+  const projectCount = useCallback((path: string | null | 'classified') => {
+    const srcKeys = new Set(sessions.map((s) => s.sessionId));
+    const all = [...sessions, ...buildArchivedOnlyCards(archivedOnly, srcKeys)];
+    const count = (s: SessionCard) => {
       const ov = sessionProjectOverrides?.[s.sessionId];
       const effective = ov !== undefined ? ov : s.projectRef.projectPath;
-      return effective === null;
-    }).length;
-    return sessions.filter((s) => {
-      const ov = sessionProjectOverrides?.[s.sessionId];
-      const effective = ov !== undefined ? ov : s.projectRef.projectPath;
+      if (path === 'classified') return effective !== null;
+      if (path === null) return effective === null;
       return effective === path;
-    }).length;
-  }, [sessions, sessionProjectOverrides]);
+    };
+    return all.filter(count).length;
+  }, [sessions, sessionProjectOverrides, archivedOnly]);
 
   // 折叠切换
   const toggleGroup = useCallback((root: string) => {
@@ -761,15 +821,18 @@ export function SessionsPanel({ app }: { app: App }) {
   }, []);
 
   // 项目分组（按会话数量降序排列）— 根目录来自配置，不硬编码；会话数为 0 的项目隐藏
+  // 根分组标题右侧显示该根目录下会话总数（如「项目管理-系统  50」）
   const menuGroups = useMemo<MenuGroup[]>(() => {
     const roots = getConfig().projectRoots.length > 0 ? getConfig().projectRoots : [];
-    return roots.map((root) => ({
-      root,
-      projects: projects
+    return roots.map((root) => {
+      const projs = projects
         .filter((p) => p.folderPath.startsWith(root + '/'))
         .filter((p) => projectCount(p.folderPath) > 0) // 隐藏 0 会话项目
-        .sort((a, b) => projectCount(b.folderPath) - projectCount(a.folderPath)),
-    })).filter((g) => g.projects.length > 0);
+        .sort((a, b) => projectCount(b.folderPath) - projectCount(a.folderPath));
+      // 根分组会话总数 = 该根下各项目会话数之和（与菜单可见项目对应）
+      const total = projs.reduce((sum, p) => sum + projectCount(p.folderPath), 0);
+      return { root, projects: projs, total };
+    }).filter((g) => g.projects.length > 0);
   }, [projects, projectCount]);
 
   // 移动弹窗可分组的项目（按 projectRoots 上级文件夹分组；移动弹窗显示全部项目文件夹，不隐藏 0 会话项目）
@@ -783,10 +846,14 @@ export function SessionsPanel({ app }: { app: App }) {
     })).filter((g) => g.projects.length > 0);
   }, [projects]);
 
-  // 右侧过滤
+  // 右侧过滤（切片 + 顶层状态双维，项目/通用共用）
   const filteredSessions = useMemo(() => {
-    let list = [...sessions];
-    // 项目 Tab：Claude + CodeM 共用（按项目归属过滤；日常仅 Claude 有）
+    // 全量可见会话 = 源文件会话 + 仅存档补齐会话（后者已并入 archivedIds → 自动标记已存档态）
+    const srcKeys = new Set(sessions.map((s) => s.sessionId));
+    const archivedOnlyCards = buildArchivedOnlyCards(archivedOnly, srcKeys);
+    const allSessions = [...sessions, ...archivedOnlyCards];
+    let list = [...allSessions];
+    // 项目 Tab：按项目归属过滤（日常仅 Claude 有）；「未归类/已归类」为项目 Tab 专属
     if (activeSidebarTab === 'projects') {
       const effectiveProject = (s: SessionCard) => {
         const ov = sessionProjectOverrides?.[s.sessionId];
@@ -796,6 +863,9 @@ export function SessionsPanel({ app }: { app: App }) {
       };
       if (selectedProject) {
         list = list.filter((s) => effectiveProject(s) === selectedProject);
+      } else if (selectedFilter === 'classified') {
+        // 已归类：归属到某个项目文件夹的会话（非 null）
+        list = list.filter((s) => effectiveProject(s) !== null);
       } else if (selectedFilter === 'none') {
         list = list.filter((s) => effectiveProject(s) === null);
       } else if (selectedFilter === 'daily' && activeAgent === 'claude') {
@@ -803,8 +873,20 @@ export function SessionsPanel({ app }: { app: App }) {
         list = list.filter((s) => sessionProjectOverrides?.[s.sessionId] === '__daily__');
       }
     } else {
-      // 通用 Tab（日期切片基于「修改时间」fileMTime：反映文件最后写入时间，与 Claude 30 天清理判定一致；
-      // 仅存档补齐会话无源文件，退化用 lastTime）
+      // 通用 Tab（仅轮次切片保留在侧栏；日期切片由下方公共块处理）
+      if (selectedFilter === 'turn5') {
+        list = list.filter((s) => s.userTurns <= 5);
+      } else if (selectedFilter === 'turn20') {
+        list = list.filter((s) => s.userTurns > 5 && s.userTurns <= 20);
+      } else if (selectedFilter === 'turn20plus') {
+        list = list.filter((s) => s.userTurns > 20);
+      }
+    }
+
+    // ===== 时间切片（跨项目/通用一致：今日/近三日/本周）=====
+    // 基于「修改时间」fileMTime：反映文件最后写入时间，与 Claude 30 天清理判定一致；
+    // 仅存档补齐会话无源文件，退化用 lastTime
+    if (selectedFilter === 'today' || selectedFilter === 'threeDays' || selectedFilter === 'week') {
       const parseTs = (iso: string | undefined): number => (iso ? new Date(iso).getTime() : NaN);
       const localMidnightDaysAgo = (daysAgo: number): number => {
         const d = new Date();
@@ -833,62 +915,29 @@ export function SessionsPanel({ app }: { app: App }) {
           const t = tsOf(s);
           return !isNaN(t) && t >= cutoff;
         });
-      } else if (selectedFilter === 'turn5') {
-        list = list.filter((s) => s.userTurns <= 5);
-      } else if (selectedFilter === 'turn20') {
-        list = list.filter((s) => s.userTurns > 5 && s.userTurns <= 20);
-      } else if (selectedFilter === 'turn20plus') {
-        list = list.filter((s) => s.userTurns > 20);
       }
     }
 
-    // 会话状态筛选（通用 Tab 专属：未存档/已存档/已收割/待收割）
-    // 基于全量会话（含仅存档会话补充）独立过滤，不叠加时间/轮次，互斥选择
-    if (activeSidebarTab === 'general' && (selectedFilter === 'unarchived' || selectedFilter === 'archived' || selectedFilter === 'harvested' || selectedFilter === 'pendingHarvest')) {
-      const srcKeys = new Set(sessions.map((s) => s.sessionId));
-      const archivedOnlySessions: SessionCard[] = archivedOnly
-        .filter((a) => !srcKeys.has(a.sessionId)) // 查重：源文件仍在的不补齐
-        .map((a) => ({
-          sessionId: a.sessionId,
-          agent: 'claude',
-          aiTitle: a.aiTitle || a.firstPrompt.slice(0, 40) || '(无标题)',
-          firstPrompt: a.firstPrompt,
-          startTime: a.lastTime,
-          lastTime: a.lastTime,
-          fileMTime: a.latestMTime,
-          userTurns: 0,
-          toolCalls: 0,
-          cwd: '',
-          projectRef: a.projectRef, // 继承存档副本内重新匹配的项目归属（原分组）
-          filePath: a.latestPath,
-          entrySource: '命令行',
-          skills: [],
-          harvestStatus: 'none', // 仅存档会话无源文件可查收割，恒 none
-          lastHarvestAt: null,
-        }));
-      // 全量可见会话：源文件会话 + 仅存档会话（后者 id 也已并入 archivedIds）
-      const allVisible = [...sessions, ...archivedOnlySessions];
-      if (selectedFilter === 'unarchived') {
-        list = allVisible.filter((s) => !archivedIds.has(s.sessionId));
-      } else if (selectedFilter === 'archived') {
-        list = allVisible.filter((s) => archivedIds.has(s.sessionId));
-      } else if (selectedFilter === 'harvested') {
-        list = allVisible.filter((s) => s.harvestStatus === 'harvested');
-      } else if (selectedFilter === 'pendingHarvest') {
-        list = allVisible.filter((s) => s.harvestStatus !== 'harvested');
-      }
-      if (search.trim()) {
-        const q = search.trim().toLowerCase();
-        list = list.filter((s) => (titleOverrides[s.sessionId] || s.aiTitle).toLowerCase().includes(q) || s.firstPrompt.toLowerCase().includes(q));
-      }
-      return list;
+    // ===== 顶层状态双维（跨项目/通用切片联动）=====
+    // 存档维：archived=已存档 / unarchived=未存档（仅 Claude 有概念）
+    if (archiveFilter === 'archived') {
+      list = list.filter((s) => archivedIds.has(s.sessionId));
+    } else if (archiveFilter === 'unarchived') {
+      list = list.filter((s) => !archivedIds.has(s.sessionId));
     }
+    // 收割维：harvested=已收割 / pendingHarvest=待收割
+    if (harvestFilter === 'harvested') {
+      list = list.filter((s) => s.harvestStatus === 'harvested');
+    } else if (harvestFilter === 'pendingHarvest') {
+      list = list.filter((s) => s.harvestStatus !== 'harvested');
+    }
+
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter((s) => (titleOverrides[s.sessionId] || s.aiTitle).toLowerCase().includes(q) || s.firstPrompt.toLowerCase().includes(q));
     }
-    return list;
-  }, [sessions, activeSidebarTab, activeAgent, selectedProject, selectedFilter, search, archivedIds, archivedOnly, titleOverrides, sessionProjectOverrides]);
+    return sortByMtime(list);
+  }, [sessions, activeSidebarTab, activeAgent, selectedProject, selectedFilter, search, archivedIds, archivedOnly, titleOverrides, sessionProjectOverrides, archiveFilter, harvestFilter]);
 
   // 一键存档当前筛选结果
   // ⚠️ 必须在 filteredSessions 声明之后定义：useCallback 依赖数组在定义时求值，
@@ -922,36 +971,84 @@ export function SessionsPanel({ app }: { app: App }) {
 
   // 当前标题
   const currentTitle = useMemo(() => {
+    // 先算切片标题
+    let sliceTitle = '';
     if (activeSidebarTab === 'projects') {
-      if (selectedProject) return selectedProject.replace(/^[^/]+\//, '');
-      if (selectedFilter === 'none') return '未归类会话'; // 非 FilterKey 成员，绕开类型系统（全状态 only）
-      if (selectedFilter === 'daily' && activeAgent === 'claude') return '日常会话';
-      return '全部会话';
+      if (selectedProject) sliceTitle = selectedProject.replace(/^[^/]+\//, '');
+      else if (selectedFilter === 'classified') sliceTitle = '已归类会话';
+      else if (selectedFilter === 'none') sliceTitle = '未归类会话';
+      else if (selectedFilter === 'daily' && activeAgent === 'claude') sliceTitle = '日常会话';
+      else sliceTitle = '全部会话';
+    } else {
+      if (selectedFilter === 'today') sliceTitle = '今日会话';
+      else if (selectedFilter === 'threeDays') sliceTitle = '近三日会话';
+      else if (selectedFilter === 'week') sliceTitle = '本周会话';
+      else if (selectedFilter === 'turn5') sliceTitle = '≤5 轮提问';
+      else if (selectedFilter === 'turn20') sliceTitle = '≤20 轮提问';
+      else if (selectedFilter === 'turn20plus') sliceTitle = '20+ 轮提问';
+      else sliceTitle = '全部会话';
     }
-    if (selectedFilter === 'archived' && activeAgent === 'claude') return '已存档';
-    if (selectedFilter === 'unarchived' && activeAgent === 'claude') return '未存档';
-    if (selectedFilter === 'harvested') return '已收割';
-    if (selectedFilter === 'pendingHarvest') return '待收割';
-    if (selectedFilter === 'today') return '今日会话';
-    if (selectedFilter === 'threeDays') return '近三日会话';
-    if (selectedFilter === 'week') return '本周会话';
-    if (selectedFilter === 'turn5') return '≤5 轮提问';
-    if (selectedFilter === 'turn20') return '≤20 轮提问';
-    if (selectedFilter === 'turn20plus') return '20+ 轮提问';
-    return '全部会话';
-  }, [activeSidebarTab, activeAgent, selectedProject, selectedFilter]);
+    // 顶层状态双维激活时并入标题
+    if (archiveFilter !== 'all' || harvestFilter !== 'all') {
+      const parts: string[] = [];
+      if (archiveFilter === 'archived') parts.push('已存档');
+      else if (archiveFilter === 'unarchived') parts.push('未存档');
+      if (harvestFilter === 'harvested') parts.push('已收割');
+      else if (harvestFilter === 'pendingHarvest') parts.push('待收割');
+      return `${sliceTitle} · ${parts.join(' + ')}`;
+    }
+    return sliceTitle;
+  }, [activeSidebarTab, activeAgent, selectedProject, selectedFilter, archiveFilter, harvestFilter]);
+
+  // 快捷打开存档目录（顶部按钮，系统文件管理器）
+  const openArchiveFolder = useCallback(async () => {
+    const dir = getSessionArchiveDir();
+    try {
+      // 目录不存在先创建，再交给系统"打开文件位置"打开
+      if (!fs.existsSync(dir)) { try { fs.mkdirSync(dir, { recursive: true }); } catch (e: any) { new Notice(`创建存档目录失败：${e?.message || e}`); return; } }
+      const pl = process.platform;
+      const cmd = pl === 'win32' ? 'explorer' : pl === 'darwin' ? 'open' : 'xdg-open';
+      const sub = spawn(cmd, [dir], { detached: true, stdio: 'ignore' });
+      sub.on('error', (err: any) => new Notice(`打开存档目录失败：${err?.message || err}`));
+      sub.unref();
+    } catch (e: any) {
+      new Notice(`打开存档目录失败：${e?.message || e}`);
+    }
+  }, []);
+
+  // 全量可见会话列表 = 源文件会话 + 仅存档补齐会话（供计数/过滤复用）
+  const mergedSessions = useMemo(() => {
+    const srcKeys = new Set(sessions.map((s) => s.sessionId));
+    return [...sessions, ...buildArchivedOnlyCards(archivedOnly, srcKeys)];
+  }, [sessions, archivedOnly]);
+
+  // 右侧过滤后的会话总数（「全部」计数 / 空态判断）
+  const allSessionCount = mergedSessions.length;
+
+  // 日常计数 = 源文件 + 仅存档中标为 __daily__ 的会话数（日常抽屉）
+  const dailySessionCount = useMemo(() => (
+    mergedSessions.filter((s) => sessionProjectOverrides?.[s.sessionId] === '__daily__').length
+  ), [mergedSessions, sessionProjectOverrides]);
 
   // 已存档计数 = 源文件存在的已存档 + 仅存档的会话（与已存档视图一致）
-  const archivedCount = useMemo(() => {
-    const srcArchived = sessions.filter((s) => archivedIds.has(s.sessionId)).length;
-    const srcKeys = new Set(sessions.map((s) => s.sessionId));
-    const onlyArchived = archivedOnly.filter((a) => !srcKeys.has(a.sessionId)).length;
-    return srcArchived + onlyArchived;
-  }, [sessions, archivedIds, archivedOnly]);
+  const archivedCount = useMemo(() => (
+    mergedSessions.filter((s) => archivedIds.has(s.sessionId)).length
+  ), [mergedSessions, archivedIds]);
+
+  // 未存档 / 已收割 / 待收割计数（基于全量可见会话）
+  const unarchivedCount = useMemo(() => (
+    mergedSessions.filter((s) => !archivedIds.has(s.sessionId)).length
+  ), [mergedSessions, archivedIds]);
+  const harvestedCount = useMemo(() => (
+    mergedSessions.filter((s) => s.harvestStatus === 'harvested').length
+  ), [mergedSessions]);
+  const pendingHarvestCount = useMemo(() => (
+    mergedSessions.filter((s) => s.harvestStatus !== 'harvested').length
+  ), [mergedSessions]);
 
   // 加载/空/错误占位
   const renderMain = () => {
-    if (loading && sessions.length === 0) {
+    if (loading && allSessionCount === 0) {
       return <div className="mswb-sessions-empty">扫描会话中…</div>;
     }
     if (error) {
@@ -963,7 +1060,7 @@ export function SessionsPanel({ app }: { app: App }) {
         </div>
       );
     }
-    if (sessions.length === 0) {
+    if (allSessionCount === 0) {
       return (
         <div className="mswb-sessions-empty">
           <div style={{ fontSize: 32 }}>💬</div>
@@ -982,7 +1079,7 @@ export function SessionsPanel({ app }: { app: App }) {
             const ov = sessionProjectOverrides?.[s.sessionId];
             const ep = ov !== undefined ? ov : s.projectRef.projectPath;
             return (
-              <SessionCardView key={s.sessionId} card={s} archived={archivedIds.has(s.sessionId)} sourceMissing={!s.cwd && !s.userTurns} titleOverride={titleOverrides[s.sessionId] ?? null} effectiveProjectPath={ep} onOpen={openDetail} onOpenInClaude={openInClaude} onArchive={handleArchive} onUnarchive={handleUnarchive} onDelete={handleDelete} onTitleChange={handleTitleChange} onMoveClick={openMoveDialog} />
+              <SessionCardView key={s.sessionId} card={s} archived={archivedIds.has(s.sessionId)} sourceMissing={!!s.sourceMissing} titleOverride={titleOverrides[s.sessionId] ?? null} effectiveProjectPath={ep} onOpen={openDetail} onOpenInClaude={openInClaude} onArchive={handleArchive} onUnarchive={handleUnarchive} onDelete={handleDelete} onTitleChange={handleTitleChange} onMoveClick={openMoveDialog} />
             );
           })}
       </div>
@@ -1035,7 +1132,7 @@ export function SessionsPanel({ app }: { app: App }) {
         </div>
       ) : (
         <>
-          {/* 顶部栏 */}
+          {/* 顶部栏：标题 + Agent + 状态筛选（同一层）+ 操作按钮 */}
           <div className="mswb-sessions-header">
             <div className="mswb-sessions-header-left">
               <span className="mswb-sessions-title">💬 会话</span>
@@ -1051,6 +1148,9 @@ export function SessionsPanel({ app }: { app: App }) {
                   setSelectedProject(null);
                   setSelectedFilter('all');
                   setSearch('');
+                  // 切换 Agent：存档/收割维度重置（CodeM 无存档概念，收割态仍可筛选）
+                  setArchiveFilter('all');
+                  setHarvestFilter('all');
                   // Claude 与 CodeM 均支持项目分组 → 保持当前 Tab，无需强制切换
                 }}
                 title="切换会话数据源"
@@ -1058,15 +1158,67 @@ export function SessionsPanel({ app }: { app: App }) {
                 <option value="claude">🤖 Claude Code</option>
                 <option value="codem">🏷 CodeM</option>
               </select>
+              {/* 顶层日期快捷：今日 + 搜索（跨切片） */}
+              <div className="mswb-sessions-topfilters">
+                {TOP_TIME_FILTERS.map((item) => (
+                  <button
+                    key={item.key}
+                    className={`mswb-status-chip ${selectedFilter === item.key ? 'active' : ''}`}
+                    onClick={() => { setSelectedFilter(item.key === selectedFilter ? 'all' : item.key); setSelectedProject(null); }}
+                    title="只看今日修改的会话（基于 fileMTime）"
+                  >
+                    {item.label}
+                  </button>
+                ))}
+                <input
+                  type="text"
+                  className="mswb-sessions-topsearch"
+                  placeholder="搜索会话"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  title="按标题 / 首条提问过滤会话"
+                />
+              </div>
+              {/* 顶层状态筛选（跨项目/通用切片联动；存档维 + 收割维可双选，点击再点取消） */}
+              <div className="mswb-sessions-statusbar">
+                {STATUS_FILTERS.map((item) => {
+                  const isArchiveDim = item.key === 'archived' || item.key === 'unarchived';
+                  const isHarvestDim = item.key === 'harvested' || item.key === 'pendingHarvest';
+                  // CodeM 无存档概念，存档维按钮隐藏；收割维两个 Agent 都可用
+                  if (item.claudeOnly && activeAgent !== 'claude') return null;
+                  const active = isArchiveDim
+                    ? archiveFilter === item.key
+                    : isHarvestDim
+                      ? harvestFilter === item.key
+                      : false;
+                  const click = () => {
+                    if (isArchiveDim) setArchiveFilter(active ? 'all' : item.key as ArchiveFilter);
+                    else if (isHarvestDim) setHarvestFilter(active ? 'all' : item.key as HarvestFilter);
+                  };
+                  return (
+                    <button
+                      key={item.key}
+                      className={`mswb-status-chip${active ? ' active' : ''}`}
+                      onClick={click}
+                      title={item.hint}
+                    >
+                      {item.icon}{item.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <div className="mswb-sessions-header-actions">
               {activeAgent === 'claude' && (
-                <button className="mswb-sessions-refresh-btn" onClick={handleBulkArchive} disabled={bulkArchiving} title="对当前筛选列表的会话创建存档副本（不删除源文件）">
-                  {bulkArchiving ? '存档中…' : `📦 存档当前${filteredSessions.length > 0 ? ` (${filteredSessions.length})` : ''}`}
+                <button className="mswb-sessions-refresh-btn mswb-sessions-refresh-icon" onClick={handleBulkArchive} disabled={bulkArchiving} title={`对当前筛选的 ${filteredSessions.length} 个会话创建存档副本（不删除源文件）`}>
+                  {bulkArchiving ? '…' : '📦'}
                 </button>
               )}
-              <button className="mswb-sessions-refresh-btn" onClick={doScan} disabled={loading}>
-                {loading ? '扫描中…' : '🔄 刷新'}
+              <button className="mswb-sessions-refresh-btn mswb-sessions-refresh-icon" onClick={openArchiveFolder} title={`打开存档目录：${getSessionArchiveDir()}`}>
+                📂
+              </button>
+              <button className="mswb-sessions-refresh-btn mswb-sessions-refresh-icon" onClick={doScan} disabled={loading} title={loading ? '扫描中…' : '重新扫描会话'}>
+                {loading ? '…' : '🔄'}
               </button>
             </div>
           </div>
@@ -1090,12 +1242,17 @@ export function SessionsPanel({ app }: { app: App }) {
               {/* 项目 Tab（Claude + CodeM 共用：按项目文件夹分组，CodeM 无日常/存档概念） */}
               {activeSidebarTab === 'projects' && (
                 <div className="mswb-sessions-menu">
-                  {/* 顶部固定项：全部 / 未归类（存档/日常仅 Claude 有概念） */}
+                  {/* 顶部固定项：全部 / 已归类 / 未归类（日常仅 Claude 有概念） */}
                   <div className="mswb-sessions-menu-group">
                     <div className="mswb-sessions-menu-item mswb-sessions-menu-all" onClick={() => { setSelectedProject(null); setSelectedFilter('all'); }}>
                       <span className="mswb-sessions-menu-icon">📆</span>
                       <span className="mswb-sessions-menu-name">全部</span>
-                      <span className="mswb-sessions-menu-count">{sessions.length}</span>
+                      <span className="mswb-sessions-menu-count">{allSessionCount}</span>
+                    </div>
+                    <div className="mswb-sessions-menu-item" onClick={() => { setSelectedProject(null); setSelectedFilter('classified'); }}>
+                      <span className="mswb-sessions-menu-icon">📁</span>
+                      <span className="mswb-sessions-menu-name">已归类</span>
+                      <span className="mswb-sessions-menu-count">{projectCount('classified')}</span>
                     </div>
                     <div className="mswb-sessions-menu-item" onClick={() => { setSelectedProject(null); setSelectedFilter('none'); }}>
                       <span className="mswb-sessions-menu-icon">🗂️</span>
@@ -1106,12 +1263,12 @@ export function SessionsPanel({ app }: { app: App }) {
                       <div className="mswb-sessions-menu-item" onClick={() => { setSelectedProject(null); setSelectedFilter('daily'); }}>
                         <span className="mswb-sessions-menu-icon">📔</span>
                         <span className="mswb-sessions-menu-name">日常</span>
-                        <span className="mswb-sessions-menu-count">{sessions.filter((s) => sessionProjectOverrides?.[s.sessionId] === '__daily__').length}</span>
+                        <span className="mswb-sessions-menu-count">{dailySessionCount}</span>
                       </div>
                     )}
                   </div>
 
-                  {/* 项目分组（可折叠） */}
+                  {/* 项目分组（可折叠）；根分组标题行显示该分类下会话总数 */}
                   {menuGroups.map((g) => {
                     const isCollapsed = collapsedGroups.has(g.root);
                     return (
@@ -1119,9 +1276,11 @@ export function SessionsPanel({ app }: { app: App }) {
                         <div
                           className="mswb-sessions-menu-group-title mswb-sessions-group-collapsible"
                           onClick={() => toggleGroup(g.root)}
+                          title={`${g.root} · ${g.total} 个会话`}
                         >
                           <span className="mswb-sessions-group-arrow">{isCollapsed ? '▸' : '▾'}</span>
-                          {g.root}
+                          <span className="mswb-sessions-group-name">{g.root}</span>
+                          <span className="mswb-sessions-menu-count">{g.total}</span>
                         </div>
                         {!isCollapsed && g.projects.map((p) => (
                           <div
@@ -1176,36 +1335,6 @@ export function SessionsPanel({ app }: { app: App }) {
                         >{item.label}</button>
                       ))}
                     </div>
-                  </div>
-                  {/* 会话状态筛选：未存档 / 已存档 / 已收割 / 待收割（互斥，点击即切换） */}
-                  <div className="mswb-sessions-menu-group">
-                    {GENERAL_STATUS_FILTERS.map((item) => {
-                      const isCodemVisible = !item.claudeOnly || activeAgent === 'claude';
-                      if (!isCodemVisible) return null;
-                      return (
-                        <div
-                          key={item.key}
-                          className={`mswb-sessions-menu-item ${selectedFilter === item.key && !search ? 'active' : ''}`}
-                          onClick={() => { setSelectedFilter(item.key); setSelectedProject(null); }}
-                          title={item.hint}
-                        >
-                          <span className="mswb-sessions-menu-icon">{item.icon}</span>
-                          <span className="mswb-sessions-menu-name">{item.label}</span>
-                          {item.key === 'unarchived' && (
-                            <span className="mswb-sessions-menu-count">{sessions.filter((s) => !archivedIds.has(s.sessionId)).length}</span>
-                          )}
-                          {item.key === 'archived' && (
-                            <span className="mswb-sessions-menu-count">{archivedCount}</span>
-                          )}
-                          {item.key === 'harvested' && (
-                            <span className="mswb-sessions-menu-count">{sessions.filter((s) => s.harvestStatus === 'harvested').length}</span>
-                          )}
-                          {item.key === 'pendingHarvest' && (
-                            <span className="mswb-sessions-menu-count">{sessions.filter((s) => s.harvestStatus !== 'harvested').length}</span>
-                          )}
-                        </div>
-                      );
-                    })}
                   </div>
                 </div>
               )}

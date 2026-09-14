@@ -2811,11 +2811,43 @@
   color: var(--text-normal);
 }
 
-/* 顶部栏左侧：标题 + Agent 切换下拉（标题右侧） */
+/* 顶部栏左侧：标题 + Agent 切换下拉 + 顶层快捷筛选（放不下自动换行） */
 .mswb-sessions-header-left {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* 顶层快捷筛选容器：今日按钮 + 搜索框（与状态条同排） */
+.mswb-sessions-topfilters {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 2px;
+}
+.mswb-sessions-topsearch {
+  width: 108px;
+  padding: 2px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 12px;
+  outline: none;
+}
+.mswb-sessions-topsearch::placeholder {
+  color: var(--text-muted);
+}
+.mswb-sessions-topsearch:focus {
+  border-color: var(--interactive-accent);
+}
+
+/* 刷新图标按钮（去掉文字，只留图标） */
+.mswb-sessions-refresh-icon {
+  padding: 3px 8px;
+  font-size: 14px;
+  line-height: 1.2;
 }
 
 .mswb-sessions-refresh-btn {
@@ -3002,6 +3034,36 @@
   background: var(--background-modifier-hover);
 }
 .mswb-filter-chip.active {
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+}
+
+/* 顶层状态筛选条（位于顶部标题栏，跨项目/通用切片联动；存档维 + 收割维可双选） */
+.mswb-sessions-statusbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+  flex-wrap: nowrap; /* 单行，随标题栏靠左，收缩时不换行 */
+}
+.mswb-status-chip {
+  padding: 2px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+  user-select: none;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.mswb-status-chip:hover {
+  background: var(--background-modifier-hover);
+}
+.mswb-status-chip.active {
   color: var(--text-on-accent);
   background: var(--interactive-accent);
   border-color: var(--interactive-accent);
@@ -3201,6 +3263,9 @@
 .mswb-sessions-group-collapsible {
   cursor: pointer;
   user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .mswb-sessions-group-collapsible:hover {
   color: var(--interactive-accent);
@@ -3210,6 +3275,19 @@
   width: 14px;
   font-size: 11px;
   color: var(--text-muted);
+  flex-shrink: 0;
+}
+/* 根分组名（可省略号收缩，计数靠右） */
+.mswb-sessions-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 根分组计数：与菜单项同款徽标样式，靠右显示 */
+.mswb-sessions-group-collapsible .mswb-sessions-menu-count {
+  margin-left: auto;
 }
 
 .mswb-session-card.archived {

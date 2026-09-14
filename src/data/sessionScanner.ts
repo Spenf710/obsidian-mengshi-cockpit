@@ -71,6 +71,8 @@ export interface SessionCard {
   lastTime: string;
   /** .jsonl 文件最后修改时间 ISO（Claude 30 天清理按此判定，卡片/日期切片用它） */
   fileMTime: string;
+  /** 源文件已被清理、只剩存档副本的会话（展示为「仅存档」） */
+  sourceMissing?: boolean;
   /** 用户真实提问轮次数（排除 tool_result 回传） */
   userTurns: number;
   /** 工具调用次数（tool_use 块数） */
@@ -814,21 +816,30 @@ export interface ArchivedSessionSummary {
   size: number;
   /** 存档副本文件修改时间 ISO */
   latestMTime: string;
+  /** 会话创建时间 ISO（存档副本内最早时间戳） */
+  startTime: string;
   /** 最后活动时间 ISO（从 jsonl 内解析，无则用 mtime） */
   lastTime: string;
   aiTitle: string;
   firstPrompt: string;
+  /** 用户真实提问轮次数（从存档副本解析） */
+  userTurns: number;
+  /** 工具调用次数（tool_use 块数，从存档副本解析） */
+  toolCalls: number;
   /** 项目归属（从存档副本内重新做三线索匹配，继承原有分组） */
   projectRef: ProjectRef;
 }
 
-/** 存档元信息轻量解析（提取标题/时间/首问/归属文本片段） */
-async function parseArchivedMetadata(filePath: string): Promise<{ aiTitle: string; firstPrompt: string; lastTime: string; cwd: string; textChunks: string[] } | null> {
+/** 存档元信息轻量解析（提取标题/时间/首问/归属文本片段/轮次统计） */
+async function parseArchivedMetadata(filePath: string): Promise<{ startTime: string; aiTitle: string; firstPrompt: string; lastTime: string; cwd: string; textChunks: string[]; userTurns: number; toolCalls: number } | null> {
   return new Promise((resolve) => {
+    let startTime = '';
     let aiTitle = '';
     let firstPrompt = '';
     let lastTime = '';
     let cwd = '';
+    let userTurns = 0;
+    let toolCalls = 0;
     let hasAny = false;
     const textChunks: string[] = [];
 
@@ -844,8 +855,11 @@ async function parseArchivedMetadata(filePath: string): Promise<{ aiTitle: strin
         try { obj = JSON.parse(line); } catch { continue; }
         hasAny = true;
         const t = obj.type;
-        if (obj.timestamp && !lastTime) lastTime = obj.timestamp;
-        else if (obj.timestamp) lastTime = obj.timestamp;
+        if (obj.timestamp) {
+          if (!lastTime) lastTime = obj.timestamp;
+          if (!startTime) startTime = obj.timestamp;
+          lastTime = obj.timestamp;
+        }
         if (obj.cwd && !cwd) cwd = obj.cwd;
         if (t === 'ai-title' && obj.aiTitle) aiTitle = obj.aiTitle as string;
         if (t === 'user') {
@@ -854,8 +868,16 @@ async function parseArchivedMetadata(filePath: string): Promise<{ aiTitle: strin
           if (!isToolTurn) {
             const text = extractText(content);
             if (text) {
+              userTurns++;
               if (!firstPrompt) firstPrompt = text.slice(0, 200);
               if (textChunks.length < 3) textChunks.push(text);
+            }
+          }
+        } else if (t === 'assistant') {
+          const content = obj.message?.content;
+          if (Array.isArray(content)) {
+            for (const b of content) {
+              if (b?.type === 'tool_use') toolCalls++;
             }
           }
         }
@@ -869,14 +891,14 @@ async function parseArchivedMetadata(filePath: string): Promise<{ aiTitle: strin
           if (obj.type === 'ai-title' && obj.aiTitle) aiTitle = obj.aiTitle;
         } catch { /* ignore */ }
       }
-      resolve(hasAny ? { aiTitle, firstPrompt, lastTime, cwd, textChunks } : null);
+      resolve(hasAny ? { startTime, aiTitle, firstPrompt, lastTime, cwd, textChunks, userTurns, toolCalls } : null);
     });
     stream.on('error', () => resolve(null));
   });
 }
 
 // 存档元信息增量缓存（同源文件扫描策略：文件大小+mtime 未变则跳过解析）
-const archivedMetaCache = new Map<string, { size: number; mtimeMs: number; meta: { aiTitle: string; firstPrompt: string; lastTime: string; cwd: string; textChunks: string[] } | null }>();
+const archivedMetaCache = new Map<string, { size: number; mtimeMs: number; meta: { startTime: string; aiTitle: string; firstPrompt: string; lastTime: string; cwd: string; textChunks: string[]; userTurns: number; toolCalls: number } | null }>();
 
 /**
  * 扫描存档目录，按 sessionId 去重（查重），每个会话取最新存档副本。
@@ -915,7 +937,7 @@ export async function scanArchivedSessions(archiveDir: string, knownProjectPaths
   // 第二遍：对每个最新副本提取元信息（增量缓存）+ 项目归属
   const summaries: ArchivedSessionSummary[] = [];
   for (const [sessionId, p] of byId) {
-    let meta: { aiTitle: string; firstPrompt: string; lastTime: string; cwd: string; textChunks: string[] } | null;
+    let meta: { startTime: string; aiTitle: string; firstPrompt: string; lastTime: string; cwd: string; textChunks: string[]; userTurns: number; toolCalls: number } | null;
     const cached = archivedMetaCache.get(p.path);
     if (cached && cached.size === p.size && cached.mtimeMs === p.mtimeMs) {
       meta = cached.meta;
@@ -930,9 +952,12 @@ export async function scanArchivedSessions(archiveDir: string, knownProjectPaths
       latestPath: p.path,
       size: p.size,
       latestMTime: new Date(p.mtimeMs).toISOString(),
+      startTime: meta?.startTime || meta?.lastTime || new Date(p.mtimeMs).toISOString(),
       lastTime: meta?.lastTime || new Date(p.mtimeMs).toISOString(),
       aiTitle: meta?.aiTitle || '',
       firstPrompt: meta?.firstPrompt || '',
+      userTurns: meta?.userTurns || 0,
+      toolCalls: meta?.toolCalls || 0,
       projectRef,
     });
   }

@@ -1,6 +1,6 @@
 {
   "name": "mengshi-workbench",
-  "version": "0.6.9",
+  "version": "0.6.10",
   "description": "猛士驾驶舱 — 日历、项目、待办、排期、飞书、会话一体化工作面板",
   "main": "main.js",
   "scripts": {
