@@ -51,7 +51,7 @@ export interface SessionConfig {
   sessionRootDir: string;
   /** claude CLI 路径（空 = 自动检测，loop 功能用） */
   claudeCliPath: string;
-  /** 会话存档目录（绝对路径），空 = 默认 ~/.claude/projects/_archived */
+  /** 会话存档目录（绝对路径），空 = 默认 ~/.claude/archives（独立于清理扫描，且不在 ~/.claude/projects 内） */
   archiveDir: string;
   /** CodeM 会话根目录（默认 ~/.codem/sessions），存放各项目目录的 .jsonl */
   codemRootDir: string;
@@ -325,11 +325,14 @@ export function getSessionRootDir(): string {
   return path.join(os.homedir(), '.claude', 'projects');
 }
 
-/** 解析会话存档目录：用户配置 > 默认 ~/.claude/projects/_archived */
+/** 解析会话存档目录：用户配置 > 默认 ~/.claude/archives
+ *  默认值 2026-09-14 从 ~/.claude/projects/_archived 迁出：
+ *  Claude 30 天清理递归扫 ~/.claude/projects 全树，子目录存档副本被误清；
+ *  ~/.claude/archives 在清理范围之外，存档副本不再被自动删除。 */
 export function getSessionArchiveDir(): string {
   const cfg = getSessionConfig();
   if (cfg.archiveDir) return cfg.archiveDir;
-  return path.join(getSessionRootDir(), '_archived');
+  return path.join(os.homedir(), '.claude', 'archives');
 }
 
 /** 解析 CodeM 会话根目录：用户配置 > 默认 ~/.codem/sessions */

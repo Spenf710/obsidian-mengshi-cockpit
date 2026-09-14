@@ -54,6 +54,8 @@ interface CodemMeta {
   harvestStatus: HarvestStatus;
   /** 最后一次收割指令的 ISO 时间 */
   lastHarvestAt: string | null;
+  /** .jsonl 文件最后修改时间 ISO（卡片/日期切片用它） */
+  mtime: string;
 }
 const codemFileCache = new Map<string, { size: number; mtimeMs: number; meta: CodemMeta | null }>();
 
@@ -487,6 +489,7 @@ export async function scanCodemSessions(rootDir: string, knownProjectPaths: stri
             fromFeishu: !!raw.fromFeishu,
             harvestStatus: raw.harvestStatus,
             lastHarvestAt: raw.lastHarvestAt,
+            mtime: new Date(st.mtimeMs).toISOString(),
           }
         : null;
       codemFileCache.set(filePath, { size: st.size, mtimeMs: st.mtimeMs, meta });
@@ -506,6 +509,7 @@ export async function scanCodemSessions(rootDir: string, knownProjectPaths: stri
       firstPrompt: meta.firstPrompt,
       startTime: meta.startTime,
       lastTime: meta.lastTime,
+      fileMTime: meta.mtime,
       userTurns: meta.userTurns,
       toolCalls: meta.toolCalls,
       cwd: meta.cwd,

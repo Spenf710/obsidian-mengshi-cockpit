@@ -69,6 +69,8 @@ export interface SessionCard {
   startTime: string;
   /** 会话最后活动时间 ISO */
   lastTime: string;
+  /** .jsonl 文件最后修改时间 ISO（Claude 30 天清理按此判定，卡片/日期切片用它） */
+  fileMTime: string;
   /** 用户真实提问轮次数（排除 tool_result 回传） */
   userTurns: number;
   /** 工具调用次数（tool_use 块数） */
@@ -599,6 +601,7 @@ export async function scanSessions(
         firstPrompt: meta.firstPrompt,
         startTime: meta.startTime,
         lastTime: meta.lastTime,
+        fileMTime: new Date(st.mtimeMs).toISOString(),
         userTurns: meta.userTurns,
         toolCalls: meta.toolCalls,
         cwd: meta.cwd,
@@ -689,6 +692,7 @@ export async function scanAllSessions(
         firstPrompt: meta.firstPrompt,
         startTime: meta.startTime,
         lastTime: meta.lastTime,
+        fileMTime: new Date(st.mtimeMs).toISOString(),
         userTurns: meta.userTurns,
         toolCalls: meta.toolCalls,
         cwd: meta.cwd,
@@ -808,6 +812,8 @@ export interface ArchivedSessionSummary {
   latestPath: string;
   /** 存档文件大小（字节） */
   size: number;
+  /** 存档副本文件修改时间 ISO */
+  latestMTime: string;
   /** 最后活动时间 ISO（从 jsonl 内解析，无则用 mtime） */
   lastTime: string;
   aiTitle: string;
@@ -923,6 +929,7 @@ export async function scanArchivedSessions(archiveDir: string, knownProjectPaths
       latestName: p.name,
       latestPath: p.path,
       size: p.size,
+      latestMTime: new Date(p.mtimeMs).toISOString(),
       lastTime: meta?.lastTime || new Date(p.mtimeMs).toISOString(),
       aiTitle: meta?.aiTitle || '',
       firstPrompt: meta?.firstPrompt || '',

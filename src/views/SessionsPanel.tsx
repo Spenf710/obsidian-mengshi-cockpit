@@ -358,16 +358,27 @@ function SessionCardView({ card, archived, sourceMissing, titleOverride, effecti
 
   // 点击外部关闭移动菜单（模态框自带 overlay 点击关闭，此处无需额外处理）
 
+  // 会话卡片时间标签：创建时间（卡片时间） + 修改时间（文件 mtime，Claude 30 天清理按此判定）
   const timeLabel = useMemo(() => {
-    if (!card.startTime) return '';
-    const d = new Date(card.startTime);
-    if (isNaN(d.getTime())) return card.lastTime;
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    const hh = String(d.getHours()).padStart(2, '0');
-    const mi = String(d.getMinutes()).padStart(2, '0');
-    return `${mm}-${dd} ${hh}:${mi}`;
-  }, [card.lastTime]);
+    const fmt = (iso: string): string => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mi = String(d.getMinutes()).padStart(2, '0');
+      return `${mm}-${dd} ${hh}:${mi}`;
+    };
+    const created = fmt(card.startTime);
+    const mtime = fmt(card.fileMTime || card.lastTime);
+    if (!created && !mtime) return '';
+    // 创建时间缺失（个别 CodeM 会话无 header）只显示修改时间
+    if (!created) return `🕒 ${mtime}`;
+    // 同一会话创建/修改时间相同时只显示一个，避免冗余
+    if (created === mtime) return `📅 ${created}`;
+    return `📅 ${created} 🕒 ${mtime}`;
+  }, [card.startTime, card.lastTime, card.fileMTime]);
 
   const sourceLabel: Record<string, string> = {
     'at-ref': '@引用',
@@ -424,13 +435,13 @@ function SessionCardView({ card, archived, sourceMissing, titleOverride, effecti
       </div>
       <div className="mswb-session-meta-row" onClick={() => onOpen(card)}>
         <span className="mswb-session-time">{timeLabel}</span>
-        {/* 收割状态徽标：harvested=会话中出现过收割调用 */}
+        <span className="mswb-session-messages">{sourceMissing ? '副本 · 源文件已清理' : `${card.userTurns} 轮提问 · ${card.toolCalls} 次调用`}</span>
+      </div>
+      <div className="mswb-session-sub">
+        {/* 收割状态徽标：harvested=会话中出现过收割调用（第二行，避免第一行拥挤） */}
         {card.harvestStatus === 'harvested' && (
           <span className="mswb-session-badge mswb-session-badge-harvest" title="该会话执行过会话知识收割">✅ 已收割</span>
         )}
-        <span className="mswb-session-messages">{sourceMissing ? '副本 · 源文件已清理' : `${card.userTurns} 轮提问 · ${card.toolCalls} 次工具调用`}</span>
-      </div>
-      <div className="mswb-session-sub">
         <span className={`mswb-session-badge source-${card.projectRef.source}`}>
           {sourceLabel[card.projectRef.source] || card.projectRef.source}
         </span>
@@ -792,7 +803,8 @@ export function SessionsPanel({ app }: { app: App }) {
         list = list.filter((s) => sessionProjectOverrides?.[s.sessionId] === '__daily__');
       }
     } else {
-      // 通用 Tab（全部按本地时区判断，避免 toISOString() 的 UTC 偏移导致早 8 点前「今日」少会话）
+      // 通用 Tab（日期切片基于「修改时间」fileMTime：反映文件最后写入时间，与 Claude 30 天清理判定一致；
+      // 仅存档补齐会话无源文件，退化用 lastTime）
       const parseTs = (iso: string | undefined): number => (iso ? new Date(iso).getTime() : NaN);
       const localMidnightDaysAgo = (daysAgo: number): number => {
         const d = new Date();
@@ -800,10 +812,11 @@ export function SessionsPanel({ app }: { app: App }) {
         d.setDate(d.getDate() - daysAgo);
         return d.getTime();
       };
+      const tsOf = (s: SessionCard): number => parseTs(s.fileMTime || s.lastTime);
       if (selectedFilter === 'today') {
         const now = new Date();
         list = list.filter((s) => {
-          const t = parseTs(s.lastTime);
+          const t = tsOf(s);
           if (isNaN(t)) return false;
           const d = new Date(t);
           return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
@@ -811,13 +824,13 @@ export function SessionsPanel({ app }: { app: App }) {
       } else if (selectedFilter === 'threeDays') {
         const cutoff = localMidnightDaysAgo(2); // 今天 + 前两天
         list = list.filter((s) => {
-          const t = parseTs(s.lastTime);
+          const t = tsOf(s);
           return !isNaN(t) && t >= cutoff;
         });
       } else if (selectedFilter === 'week') {
         const cutoff = localMidnightDaysAgo(7); // 滚动 7 天
         list = list.filter((s) => {
-          const t = parseTs(s.lastTime);
+          const t = tsOf(s);
           return !isNaN(t) && t >= cutoff;
         });
       } else if (selectedFilter === 'turn5') {
@@ -842,6 +855,7 @@ export function SessionsPanel({ app }: { app: App }) {
           firstPrompt: a.firstPrompt,
           startTime: a.lastTime,
           lastTime: a.lastTime,
+          fileMTime: a.latestMTime,
           userTurns: 0,
           toolCalls: 0,
           cwd: '',

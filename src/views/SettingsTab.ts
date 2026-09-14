@@ -173,7 +173,7 @@ export class WorkbenchSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('会话存档目录')
-      .setDesc('存档会话的存放路径，留空时默认 ~/.claude/projects/_archived')
+      .setDesc('存档会话的存放路径，留空时默认 ~/.claude/archives（在 Claude 30 天清理范围外）')
       .addText((t) => {
         t.setValue(sessionCfg.archiveDir)
           .setPlaceholder('留空使用默认路径')
