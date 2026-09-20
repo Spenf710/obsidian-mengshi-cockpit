@@ -485,9 +485,38 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: 12px;
   margin-bottom: 16px;
   flex-shrink: 0;
+}
+
+/* 视图切换按钮组（与日期导航同一行靠左） */
+.mswb-cal-view-switch {
+  display: inline-flex;
+  gap: 2px;
+  margin-right: 6px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 2px;
+}
+.mswb-cal-view-btn {
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  padding: 3px 10px;
+  font-size: 0.78em;
+  cursor: pointer;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.mswb-cal-view-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-border);
+}
+.mswb-cal-view-btn.active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
 }
 
 .mswb-cal-nav-btn {
@@ -566,6 +595,301 @@
 .mswb-cal-empty {
   border: none !important;
   background: transparent !important;
+}
+
+/* 季视图：周标题列 */
+.mswb-cal-week-col {
+  width: 96px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 0.72em;
+  color: var(--text-faint);
+  text-transform: none;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+.mswb-cal-week-label {
+  font-size: 0.7em;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: center;
+  white-space: nowrap;
+  background: var(--background-secondary) !important;
+  cursor: default;
+}
+/* 跨月日期数字加"·"前缀标记 */
+.mswb-cal-day-cross-month {
+  color: var(--text-faint);
+}
+/* 季视图状态点 */
+.mswb-cal-qstatus {
+  display: flex;
+  gap: 3px;
+  margin-top: 4px;
+  align-items: center;
+}
+.mswb-cal-qdot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* 年视图：阅读卡片布局（左上日期、右上操作、中部总览） */
+.mswb-cal-year-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 10px;
+  padding: 4px;
+  height: 100%;
+  align-content: stretch;
+}
+.mswb-cal-year-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 10px 10px 14px;
+  cursor: pointer;
+  background: var(--background-primary-alt);
+  transition: all 0.15s;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.mswb-cal-year-card:hover {
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+  border-color: var(--interactive-accent);
+}
+.mswb-cal-year-card.has-entries {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 40%, transparent);
+}
+.mswb-cal-year-card.current {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+/* 顶部行：左日期 + 右操作 */
+.mswb-cal-year-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.mswb-cal-year-month {
+  font-size: 0.92em;
+  font-weight: 700;
+  color: var(--text-normal);
+  letter-spacing: 0.5px;
+}
+.mswb-cal-year-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+/* 右上三色灯（紧凑圆点带数字） */
+.mswb-cal-year-lights {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+.mswb-cal-year-lamp {
+  min-width: 15px;
+  height: 15px;
+  border-radius: 8px;
+  line-height: 15px;
+  font-size: 0.62em;
+  font-weight: 700;
+  color: #fff;
+  padding: 0 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.mswb-cal-year-lamp.green { background: var(--color-green, #30a46c); }
+.mswb-cal-year-lamp.yellow { background: var(--color-yellow, #f5a623); }
+.mswb-cal-year-lamp.red { background: var(--color-red, #e5484d); }
+.mswb-cal-year-open-ico {
+  background: none;
+  border: none;
+  font-size: 0.82em;
+  cursor: pointer;
+  padding: 2px 3px;
+  opacity: 0.75;
+  border-radius: 4px;
+}
+.mswb-cal-year-open-ico:hover {
+  opacity: 1;
+  background: var(--background-modifier-border);
+  transform: scale(1.15);
+}
+/* 中部：状态 + 概述 */
+.mswb-cal-year-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+  margin-top: 4px;
+}
+.mswb-cal-year-status {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-start;
+  margin: 4px 0;
+}
+.mswb-cal-year-dot {
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  line-height: 16px;
+  font-size: 0.64em;
+  font-weight: 700;
+  color: #fff;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.mswb-cal-year-ai {
+  font-size: 0.7em;
+  color: var(--text-muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 4px;
+}
+.mswb-cal-year-ai-empty {
+  color: var(--text-faint);
+}
+.mswb-cal-year-card.has-monthly {
+  border-color: color-mix(in srgb, var(--interactive-accent) 60%, var(--background-modifier-border));
+}
+
+/* 季视图：2列周卡片网格（式样同年视图卡片），内容自适应不溢出 */
+.mswb-cal-quarter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-auto-rows: minmax(min-content, auto);
+  gap: 10px;
+  padding: 4px;
+  height: 100%;
+  align-content: start;
+  overflow-y: auto;
+  min-height: 0;
+}
+.mswb-cal-week-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 10px 10px 12px;
+  background: var(--background-primary-alt);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 0.15s;
+  overflow: hidden;
+  min-height: 0;
+}
+.mswb-cal-week-card:hover {
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+  border-color: var(--interactive-accent);
+}
+.mswb-cal-week-card.with-report {
+  border-color: color-mix(in srgb, var(--interactive-accent) 60%, var(--background-modifier-border));
+}
+.mswb-cal-week-card.has-log {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 40%, transparent);
+}
+.mswb-cal-week-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mswb-cal-week-range {
+  font-weight: 700;
+  font-size: 0.85em;
+  color: var(--text-normal);
+}
+.mswb-cal-week-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* 三色灯（周粒度） */
+.mswb-cal-week-lights {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+.mswb-cal-week-lamp {
+  min-width: 15px;
+  height: 15px;
+  border-radius: 8px;
+  line-height: 15px;
+  font-size: 0.62em;
+  font-weight: 700;
+  color: #fff;
+  padding: 0 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.mswb-cal-week-lamp.green { background: var(--color-green, #30a46c); }
+.mswb-cal-week-lamp.yellow { background: var(--color-yellow, #f5a623); }
+.mswb-cal-week-lamp.red { background: var(--color-red, #e5484d); }
+.mswb-cal-week-density {
+  font-size: 0.66em;
+  color: var(--text-faint);
+}
+.mswb-cal-week-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+.mswb-cal-week-tags {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.mswb-cal-week-tag {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-weight: 600;
+  color: var(--text-normal);
+  white-space: nowrap;
+  font-size: 0.68em;
+}
+.mswb-cal-week-ai {
+  font-size: 0.7em;
+  color: var(--text-muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 2px;
+  word-break: break-word;
+}
+.mswb-cal-week-ai-empty {
+  color: var(--text-faint);
+}
+.mswb-cal-week-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mswb-cal-report-btn {
+  opacity: 0.7;
+  font-size: 0.8em;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.mswb-cal-report-btn:hover {
+  opacity: 1;
+  transform: scale(1.1);
 }
 
 /* 当天 */
@@ -667,6 +991,37 @@
 .mswb-cal-day.selected {
   box-shadow: 0 0 0 2px var(--interactive-accent);
   background: color-mix(in srgb, var(--interactive-accent) 15%, var(--background-primary-alt));
+}
+
+/* 节假日 / 补班标注徽标 */
+.mswb-cal-holiday {
+  font-size: 0.62em;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: 3px;
+  line-height: 1.3;
+  white-space: nowrap;
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+}
+.mswb-cal-holiday.holiday {
+  background: color-mix(in srgb, var(--color-red, #e5484d) 14%, var(--background-secondary));
+  color: var(--color-red, #e5484d);
+}
+.mswb-cal-holiday.makeup {
+  background: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-secondary));
+  color: var(--interactive-accent);
+}
+
+/* 法定休假日背景微染（区分休息日 vs 普通工作日） */
+.mswb-cal-day.holiday {
+  background: color-mix(in srgb, var(--color-red, #e5484d) 8%, var(--background-primary-alt));
+}
+.mswb-cal-day.holiday:hover {
+  background: color-mix(in srgb, var(--color-red, #e5484d) 14%, var(--background-primary-alt));
 }
 
 /* 日期行：数字 + 打开按钮 */

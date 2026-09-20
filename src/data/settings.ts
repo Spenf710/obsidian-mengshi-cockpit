@@ -95,6 +95,12 @@ export interface PluginConfig {
   taskStorePath: string;
   /** 可见 Tab 页配置：key 为 tabKey，true=显示 */
   visibleTabs: Record<string, boolean>;
+  /** 日历是否显示周六列（默认显示） */
+  showSaturday: boolean;
+  /** 日历是否显示周日列（默认显示，周日作为工作日照常记录） */
+  showSunday: boolean;
+  /** 日历是否显示节假日 / 调休补班标注（默认显示） */
+  showHolidays: boolean;
 }
 
 const DEFAULT_CONFIG: PluginConfig = {
@@ -112,6 +118,9 @@ const DEFAULT_CONFIG: PluginConfig = {
     feishu: true,
     sessions: true,
   },
+  showSaturday: true,
+  showSunday: true,
+  showHolidays: true,
 };
 
 interface PluginData {

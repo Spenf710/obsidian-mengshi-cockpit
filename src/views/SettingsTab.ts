@@ -147,6 +147,24 @@ export class WorkbenchSettingsTab extends PluginSettingTab {
         }));
     }
 
+    // ===== 日历显示 =====
+    new Setting(containerEl).setHeading().setName('📅 日历显示');
+
+    new Setting(containerEl)
+      .setName('显示周六')
+      .setDesc('日历是否显示周六列（默认显示；如排班不涉及周六可关闭）')
+      .addToggle((t) => t.setValue(this.config.showSaturday !== false).onChange((v) => { this.config.showSaturday = v; }));
+
+    new Setting(containerEl)
+      .setName('显示周日')
+      .setDesc('日历是否显示周日列（默认显示；周日也常需要安排工作/补班）')
+      .addToggle((t) => t.setValue(this.config.showSunday !== false).onChange((v) => { this.config.showSunday = v; }));
+
+    new Setting(containerEl)
+      .setName('显示节假日 / 调休补班')
+      .setDesc('按国务院放假安排标注休假日（红）与调休补班日（蓝），默认显示')
+      .addToggle((t) => t.setValue(this.config.showHolidays !== false).onChange((v) => { this.config.showHolidays = v; }));
+
     // ===== Claude 会话 =====
     const sessionCfg = { ...getSessionConfig() };
     const sessionText: any = {};
