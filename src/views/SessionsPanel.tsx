@@ -370,8 +370,8 @@ function buildArchivedOnlyCards(archivedOnly: ArchivedSessionSummary[], srcKeys:
       filePath: a.latestPath,
       entrySource: '命令行',
       skills: [],
-      harvestStatus: 'none', // 仅存档会话无源文件可查收割，恒 none
-      lastHarvestAt: null,
+      harvestStatus: a.harvestStatus || 'none', // 仅存档会话从存档副本解析收割状态（源文件被清理后状态不丢失）
+      lastHarvestAt: a.lastHarvestAt || null,
     }));
 }
 
@@ -798,6 +798,16 @@ export function SessionsPanel({ app }: { app: App }) {
     }
   }, [detail]);
 
+  // 状态双维过滤谓词：顶部「存档 / 收割」筛选激活时，同步作用于左侧菜单计数
+  // （与 filteredSessions 顶层状态双维条件完全一致；CodeM 无存档维，仅收割维生效）
+  const matchStatusDims = useCallback((s: SessionCard) => {
+    if (archiveFilter === 'archived' && !archivedIds.has(s.sessionId)) return false;
+    if (archiveFilter === 'unarchived' && archivedIds.has(s.sessionId)) return false;
+    if (harvestFilter === 'harvested' && s.harvestStatus !== 'harvested') return false;
+    if (harvestFilter === 'pendingHarvest' && s.harvestStatus === 'harvested') return false;
+    return true;
+  }, [archiveFilter, harvestFilter, archivedIds]);
+
   // 左侧菜单项渲染：源文件会话 + 仅存档补齐会话一起统计（仅存档会显示在项目/通用切片下）
   // path=null → 未归类；path='classified' → 已归类（任意项目归属，排除日常）；其它 → 具体项目
   const projectCount = useCallback((path: string | null | 'classified') => {
@@ -810,8 +820,8 @@ export function SessionsPanel({ app }: { app: App }) {
       if (path === null) return effective === null;
       return effective === path;
     };
-    return all.filter(count).length;
-  }, [sessions, sessionProjectOverrides, archivedOnly]);
+    return all.filter(matchStatusDims).filter(count).length;
+  }, [sessions, sessionProjectOverrides, archivedOnly, matchStatusDims]);
 
   // 折叠切换
   const toggleGroup = useCallback((root: string) => {
@@ -1040,13 +1050,14 @@ export function SessionsPanel({ app }: { app: App }) {
     return [...sessions, ...buildArchivedOnlyCards(archivedOnly, srcKeys)];
   }, [sessions, archivedOnly]);
 
-  // 右侧过滤后的会话总数（「全部」计数 / 空态判断）
-  const allSessionCount = mergedSessions.length;
+  // 右侧过滤后的会话总数（「全部」计数 / 空态判断）——项目 Tab 的「全部」计数、以及空态判断，
+  // 均与顶部存档/收割筛选联动（仅考虑状态双维，不含切片维度，避免出现「激活筛选后主区域有卡但全部=0」）
+  const allSessionCount = mergedSessions.filter(matchStatusDims).length;
 
   // 日常计数 = 源文件 + 仅存档中标为 __daily__ 的会话数（日常抽屉）
   const dailySessionCount = useMemo(() => (
-    mergedSessions.filter((s) => sessionProjectOverrides?.[s.sessionId] === '__daily__').length
-  ), [mergedSessions, sessionProjectOverrides]);
+    mergedSessions.filter((s) => sessionProjectOverrides?.[s.sessionId] === '__daily__').filter(matchStatusDims).length
+  ), [mergedSessions, sessionProjectOverrides, matchStatusDims]);
 
   // 已存档计数 = 源文件存在的已存档 + 仅存档的会话（与已存档视图一致）
   const archivedCount = useMemo(() => (
