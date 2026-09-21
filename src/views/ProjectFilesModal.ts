@@ -2,7 +2,7 @@ import { App, Modal } from 'obsidian';
 
 export class ProjectFilesModal extends Modal {
   constructor(
-    private app: App,
+    app: App,
     private folderPath: string,
     private projectName: string,
   ) {

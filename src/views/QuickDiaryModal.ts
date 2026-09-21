@@ -54,8 +54,8 @@ export class QuickDiaryModal extends Modal {
   /** 弹窗关闭后的回调，用于外部刷新数据 */
   onAfterClose?: () => void;
 
-  constructor(private app: App, initialDate?: string) {
-    super(app);
+  constructor(initialApp: App, initialDate?: string) {
+    super(initialApp);
     const now = new Date();
     if (initialDate && /^\d{4}-\d{2}-\d{2}$/.test(initialDate)) {
       this.date = initialDate;

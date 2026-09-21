@@ -12,6 +12,7 @@ import {
   type ProjectGroup,
 } from '../data/projectScanner';
 import { QuickDiaryModal, getDatePath, STATUS_OPTIONS } from './QuickDiaryModal';
+import { ReportCreateModal } from './ReportCreateModal';
 import { GraphModal } from './MiniGraph';
 import { QuickTodoModal } from './QuickTodoModal';
 import { ProjectFilesModal } from './ProjectFilesModal';
@@ -29,12 +30,12 @@ import {
   scanMonthlyReports,
   buildCalendarGrid,
   buildQuarterGrid,
-  buildYearSummaries,
+  buildYearProjectChips,
   calendarColumns,
   MONTH_NAMES,
   type CalendarMonth,
   type QuarterWeekRow,
-  type YearMonthSummary,
+  type YearProjectChip,
   type WeeklyReportInfo,
   type MonthlyReportInfo,
   type LogEntry,
@@ -140,12 +141,11 @@ export function WorkbenchApp({ app }: { app: App }) {
 }
 
 // ===== 日历面板 =====
-/** 日历视图粒度：month=月视图（天粒度）、quarter=季视图（周粒度）、year=年视图（月粒度） */
-type CalViewKind = 'month' | 'quarter' | 'year';
+/** 日历视图粒度：month=日新视图（天粒度）、drawer=月异视图（季度月卡+选中月周卡联动） */
+type CalViewKind = 'month' | 'drawer';
 const CAL_VIEWS: { key: CalViewKind; label: string; icon: string; hint: string }[] = [
-  { key: 'month', label: '月', icon: '📅', hint: '月视图（按天）' },
-  { key: 'quarter', label: '季', icon: '🗓', hint: '季视图（按周）' },
-  { key: 'year', label: '年', icon: '📆', hint: '年视图（按月）' },
+  { key: 'month', label: '日新', icon: '📅', hint: '日新视图（按天记录）' },
+  { key: 'drawer', label: '月异', icon: '🪟', hint: '月异视图（月度卡片+周度卡片联动）' },
 ];
 
 function CalendarPanel({ app }: { app: App }) {
@@ -157,6 +157,7 @@ function CalendarPanel({ app }: { app: App }) {
   const [calData, setCalData] = useState<CalendarMonth | null>(null);
   const [rangeLogs, setRangeLogs] = useState<Map<string, LogEntry[]> | null>(null);
   const [loading, setLoading] = useState(true);
+  const [drawerMonth, setDrawerMonth] = useState(today.getMonth() + 1);
   const tableWrapRef = useRef<HTMLDivElement>(null);
   const [rowHeight, setRowHeight] = useState<number | null>(null);
 
@@ -182,7 +183,7 @@ function CalendarPanel({ app }: { app: App }) {
     [app],
   );
 
-  // 季视图数据：季度内全部日期
+  // 月异视图数据：季度内全部日期
   const loadQuarter = useCallback(
     async (y: number, q: number) => {
       setLoading(true);
@@ -197,23 +198,18 @@ function CalendarPanel({ app }: { app: App }) {
     [app],
   );
 
-  // 年视图数据：全年
-  const loadYear = useCallback(
-    async (y: number) => {
-      setLoading(true);
-      const logs = await scanLogsRange(app, `${y}-01-01`, `${y}-12-31`);
-      setRangeLogs(logs);
-      setLoading(false);
-    },
-    [app],
-  );
-
   // 视图/年份切换
   useEffect(() => {
     if (view === 'month') loadMonth(year, month);
-    else if (view === 'quarter') loadQuarter(year, quarter);
-    else loadYear(year);
-  }, [view, year, month, quarter, loadMonth, loadQuarter, loadYear]);
+    else if (view === 'drawer') loadQuarter(year, quarter);
+  }, [view, year, month, quarter, loadMonth, loadQuarter]);
+
+  // 抽屉视图：切换季度时，选中月默认回到该季首月（若超出当前年范围则用 1 月兜底）
+  useEffect(() => {
+    if (view !== 'drawer') return;
+    const qBase = (quarter - 1) * 3 + 1;
+    if (drawerMonth < qBase || drawerMonth > qBase + 2) setDrawerMonth(qBase);
+  }, [view, year, quarter, drawerMonth]);
 
   // 点击其他地方关闭状态下拉
   useEffect(() => {
@@ -240,14 +236,19 @@ function CalendarPanel({ app }: { app: App }) {
     return buildCalendarGrid(calData, today, { showSaturday: showSat, showSunday: showSun, showHolidays: showHolidays });
   }, [calData, today, showSat, showSun, showHolidays]);
 
-  // 季视图数据（周粒度）
+  // 抽屉视图数据（周粒度，供右栏周卡）
   const quarterGrid = useMemo<QuarterWeekRow[]>(() => {
     return buildQuarterGrid(rangeLogs ?? new Map(), year, quarter, showSat, showSun, showHolidays);
   }, [rangeLogs, year, quarter, showSat, showSun, showHolidays]);
 
-  // 年视图月份概要
-  const yearMonths = useMemo<YearMonthSummary[]>(() => {
-    return buildYearSummaries(rangeLogs ?? new Map());
+  // 项目胶囊：每月日志「一句话」按 PROJECT_EMOJI 聚合高频项目（月异左栏占比条用）
+  const yearMonthChips = useMemo<Map<number, YearProjectChip[]>>(() => {
+    const map = new Map<number, YearProjectChip[]>();
+    for (let m = 1; m <= 12; m++) {
+      const chips = buildYearProjectChips(rangeLogs ?? new Map(), m);
+      if (chips.length > 0) map.set(m, chips);
+    }
+    return map;
   }, [rangeLogs]);
 
   // 年视图三色灯：直接从当月日志统计状态分布（与月报文件解耦，始终反映真实日志）
@@ -282,11 +283,27 @@ function CalendarPanel({ app }: { app: App }) {
     return () => { alive = false; };
   }, [app, year]);
 
+  // 周报/月报一键生成：创建后刷新对应列表，让空态即时消失
+  const createWeekly = useCallback((weekStart: string) => {
+    const start = new Date(weekStart + 'T12:00:00');
+    const end = new Date(start); end.setDate(end.getDate() + 6);
+    new ReportCreateModal(app, {
+      kind: 'weekly', start, end,
+      onCreated: () => { setWeeklyReports((prev) => prev.slice()); },
+    }).open();
+  }, [app]);
+  const createMonthly = useCallback((m: number) => {
+    new ReportCreateModal(app, {
+      kind: 'monthly', month: m, year,
+      onCreated: () => { setMonthlyReports((prev) => prev.slice()); },
+    }).open();
+  }, [app, year]);
+
   // 判断某周是否被某周报覆盖
   const weeklyByWeek = useMemo(() => {
-    const map = new Map<string, WeeklyReportInfo>(); // 自然周start(周日) → 周报
+    const map = new Map<string, WeeklyReportInfo>(); // 自然周start(周一) → 周报
     for (const w of weeklyReports) {
-      // 周报归属到「起始日(周一)」所在自然周的周日，与季度网格的自然周 key 对齐；
+      // 周报归属到「起始日(周一)」所在自然周的周一，与季度网格的自然周 key 对齐；
       // 跨自然周的老周报（如 4/7~4/17）归回其起始周，与起始周三色灯对齐。
       const ws = sundayOf(w.periodStart);
       if (!map.has(ws)) map.set(ws, w);
@@ -306,9 +323,9 @@ function CalendarPanel({ app }: { app: App }) {
     return quarterGrid.map((row) => ({ row, report: weeklyByWeek.get(row.weekStart) }));
   }, [quarterGrid, weeklyByWeek]);
 
-  // 动态计算行高（仅月视图用；季视图为卡片列表自行撑开）
+  // 动态计算行高（仅日新/月视图用；月异视图卡片自行撑开）
   useLayoutEffect(() => {
-    if (view === 'year' || view === 'quarter') { setRowHeight(null); return; }
+    if (view === 'drawer') { setRowHeight(null); return; }
     const wrap = tableWrapRef.current;
     const rows = grid;
     if (!wrap || rows.length === 0) {
@@ -337,11 +354,10 @@ function CalendarPanel({ app }: { app: App }) {
     if (view === 'month') {
       if (month === 1) { setYear((y) => y - 1); setMonth(12); }
       else setMonth((m) => m - 1);
-    } else if (view === 'quarter') {
+    } else {
+      // 月异视图：按季度翻页
       if (quarter === 1) { setYear((y) => y - 1); setQuarter(4); }
       else setQuarter((q) => q - 1);
-    } else {
-      setYear((y) => y - 1);
     }
   };
 
@@ -349,20 +365,44 @@ function CalendarPanel({ app }: { app: App }) {
     if (view === 'month') {
       if (month === 12) { setYear((y) => y + 1); setMonth(1); }
       else setMonth((m) => m + 1);
-    } else if (view === 'quarter') {
+    } else {
+      // 月异视图：按季度翻页
       if (quarter === 4) { setYear((y) => y + 1); setQuarter(1); }
       else setQuarter((q) => q + 1);
-    } else {
-      setYear((y) => y + 1);
     }
   };
 
   // 标题
   const viewTitle = useMemo(() => {
     if (view === 'month') return `${year}年 ${MONTH_NAMES[month - 1]}`;
-    if (view === 'quarter') return `${year}年 第${quarter}季度`;
-    return `${year}年`;
+    return `${year}年 第${quarter}季度`;
   }, [view, year, month, quarter]);
+
+  // 抽屉视图：当前季度三个起始月（用于左栏月卡与周列过滤）
+  const drawerBase = (quarter - 1) * 3 + 1;
+  const drawerMonths = [drawerBase, drawerBase + 1, drawerBase + 2];
+
+  // 抽屉视图：右栏周列表 = 选中月所在季度的所有自然周行（复用季视图数据）
+  const drawerWeeks = useMemo(() => {
+    if (view !== 'drawer') return [] as { row: QuarterWeekRow; report?: WeeklyReportInfo }[];
+    return quarterRowsWithWeekly.filter(({ row }) => {
+      const wm = parseInt(row.weekStart.slice(5, 7), 10);
+      return wm === drawerMonth;
+    });
+  }, [view, quarterRowsWithWeekly, drawerMonth]);
+
+  // 抽屉视图：左栏月卡渲染所需的工作量统计（每月 logDays + logCount）
+  const drawerMonthMeta = useMemo(() => {
+    const map = new Map<number, { logDays: number; logCount: number }>();
+    for (const [dateStr, arr] of rangeLogs ?? new Map()) {
+      const m = parseInt(dateStr.slice(5, 7), 10);
+      let cur = map.get(m);
+      if (!cur) { cur = { logDays: 0, logCount: 0 }; map.set(m, cur); }
+      cur.logDays++;
+      cur.logCount += arr.length;
+    }
+    return map;
+  }, [rangeLogs]);
 
   // 格式化日期 YYYY-MM-DD
   const fmtDate = useCallback(
@@ -383,15 +423,6 @@ function CalendarPanel({ app }: { app: App }) {
       modal.open();
     },
     [app, year, month, fmtDate, loadMonth],
-  );
-
-  // 季/年视图点日期 → 打开日记弹窗（openDayModal）
-  const openRangeDay = useCallback(
-    (ymd: string) => {
-      setSelectedDate(ymd);
-      openDayModal(app, ymd);
-    },
-    [app],
   );
 
   // 直接打开日记文件
@@ -534,21 +565,26 @@ function CalStatusBadge({
       {/* 表格 */}
       {loading ? (
         <div className="mswb-cal-loading">加载中...</div>
-      ) : view === 'quarter' ? (
-        <QuarterTableView
-          rowsWithWeekly={quarterRowsWithWeekly}
-          tableWrapRef={tableWrapRef}
-          openReport={(relPath: string) => openVaultFile(app, relPath)}
-        />
-      ) : view === 'year' ? (
-        <YearTableView
-          summaries={yearMonths}
-          monthlyMap={monthlyMap}
+      ) : view === 'drawer' ? (
+        <DrawerTableView
+          monthQuarters={drawerMonths}
           monthStatusMap={monthStatusMap}
-          tableWrapRef={tableWrapRef}
-          year={year}
-          openMonth={(m: number) => { setView('month'); setMonth(m); }}
+          monthlyMap={monthlyMap}
+          yearMonthChips={yearMonthChips}
+          selMonth={drawerMonth}
+          monthLogMeta={drawerMonthMeta}
+          drawerWeeks={drawerWeeks}
+          onSelectMonth={(m: number) => setDrawerMonth(m)}
+          onEnterMonth={(m: number) => {
+            const ym = year * 12 + (m - 1);
+            const ny = Math.floor(ym / 12);
+            const nm = (ym % 12) + 1;
+            setYear(ny); setMonth(nm); setQuarter(Math.floor((nm - 1) / 3) + 1); setView('month');
+          }}
           openMonthly={(relPath: string) => openVaultFile(app, relPath)}
+          openReport={(relPath: string) => openVaultFile(app, relPath)}
+          createWeekly={createWeekly}
+          createMonthly={createMonthly}
         />
       ) : (
         <div className="mswb-cal-table-wrap" ref={tableWrapRef}>
@@ -645,18 +681,10 @@ function CalStatusBadge({
       <div className="mswb-cal-hint">
         {view === 'month'
           ? `${calData?.entries.size ?? 0} 篇日志 · 点击日期编辑 · 点击状态快速切换`
-          : view === 'quarter'
-            ? '季视图（按周）· 点击日期打开当天日志'
-            : '年视图（按月）· 点击月份进入月视图'}
+          : '月异视图 · 点击月度卡片切换 · 点击周卡查看周报详情'}
       </div>
     </div>
   );
-}
-
-/** 打开特定 YYYY-MM-DD 的日记弹窗（季/年视图共用） */
-function openDayModal(app: App, ymd: string): void {
-  const modal = new QuickDiaryModal(app, ymd);
-  modal.open();
 }
 
 /** 打开 vault 内文件（周报/月报点开用） */
@@ -667,155 +695,12 @@ function openVaultFile(app: App, relPath: string): void {
   }
 }
 
-/** 某日期（YYYY-MM-DD）所在自然周的周日 */
+/** 某日期（YYYY-MM-DD）所在自然周的周一（周一起始；周日归回本周一） */
 function sundayOf(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00');
-  d.setDate(d.getDate() - d.getDay());
+  const dow = d.getDay();
+  d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-/** 季视图：2列周卡片（式样参考年视图卡片），每卡=一个自然周 */
-function QuarterTableView({
-  rowsWithWeekly, tableWrapRef, openReport,
-}: {
-  rowsWithWeekly: { row: QuarterWeekRow; report?: { filePath: string; aiSummary: string; projects: string[] } }[];
-  tableWrapRef: React.RefObject<HTMLDivElement>;
-  openReport: (relPath: string) => void;
-}) {
-  // 汇总该周日志天数 + 状态三色（用于三色灯）
-  const weekStats = (row: QuarterWeekRow) => {
-    const days = new Set<number>();
-    let green = 0, yellow = 0, red = 0;
-    for (const c of row.cells) {
-      if (!c) continue;
-      if (c.count > 0) days.add(c.day);
-      for (const s of c.statuses) {
-        if (s.includes('🟢')) green++;
-        else if (s.includes('🟡')) yellow++;
-        else if (s.includes('🔴')) red++;
-      }
-    }
-    return { logDays: days.size, green, yellow, red };
-  };
-  return (
-    <div className="mswb-cal-table-wrap" ref={tableWrapRef}>
-      <div className="mswb-cal-quarter-grid">
-        {rowsWithWeekly.map(({ row, report }, ri) => {
-          const sM = parseInt(row.weekStart.slice(5, 7));
-          const sD = parseInt(row.weekStart.slice(8, 10));
-          const st = weekStats(row);
-          const hasLog = st.logDays > 0 || (report?.projects.length ?? 0) > 0;
-          const wkInMonth = Math.floor((sD - 1) / 7) + 1;
-          const rangeLabel = `${sM}月${wkInMonth}周`;
-          return (
-            <div key={ri} className={`mswb-cal-week-card${report ? ' with-report' : ''}${hasLog ? ' has-log' : ''}`}>
-              {/* 顶行：左上月周 + 右上三色灯/📄 */}
-              <div className="mswb-cal-week-head">
-                <span className="mswb-cal-week-range">{rangeLabel}</span>
-                <div className="mswb-cal-week-head-right">
-                  {hasLog && (
-                    <span className="mswb-cal-week-lights">
-                      {st.green > 0 && <span className="mswb-cal-week-lamp green">{st.green}</span>}
-                      {st.yellow > 0 && <span className="mswb-cal-week-lamp yellow">{st.yellow}</span>}
-                      {st.red > 0 && <span className="mswb-cal-week-lamp red">{st.red}</span>}
-                    </span>
-                  )}
-                  {report && (
-                    <button className="mswb-cal-report-btn" onClick={() => openReport(report.filePath)} title="打开当周周报">📄</button>
-                  )}
-                </div>
-              </div>
-              {/* 主体：项目标签(剔括号) + 概述 */}
-              <div className="mswb-cal-week-main">
-                {report ? (
-                  <>
-                    <div className="mswb-cal-week-tags">
-                      {(report.projects.length ? report.projects : ['本周无项目标签']).slice(0, 6).map((t, i) => (
-                        <span key={i} className="mswb-cal-week-tag">
-                          {t.replace(/[（(][^）)]*[）)]/g, '').replace(/\s+/g, ' ').trim()}
-                        </span>
-                      ))}
-                    </div>
-                    {report.aiSummary && <div className="mswb-cal-week-ai" title={report.aiSummary}>{report.aiSummary}</div>}
-                  </>
-                ) : (
-                  <div className="mswb-cal-week-ai mswb-cal-week-ai-empty">
-                    {hasLog ? '本周有日志，暂无周报' : '— 本周无记录 —'}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/** 年视图：12 个月阅读卡片 —— 左上日期、右上三色灯(直接来自日志统计)+月报图标、中部纵向总览概述 */
-function YearTableView({
-  summaries, monthlyMap, monthStatusMap, tableWrapRef, year, openMonth, openMonthly,
-}: {
-  summaries: YearMonthSummary[];
-  monthlyMap: Map<number, { filePath: string; aiSummary: string }>;
-  monthStatusMap: Map<number, { green: number; yellow: number; red: number }>;
-  tableWrapRef: React.RefObject<HTMLDivElement>;
-  year: number;
-  openMonth: (m: number) => void;
-  openMonthly: (relPath: string) => void;
-}) {
-  const today = new Date();
-  const curYear = today.getFullYear();
-  const curMonth = today.getMonth() + 1;
-  return (
-    <div className="mswb-cal-table-wrap" ref={tableWrapRef}>
-      <div className="mswb-cal-year-grid">
-        {summaries.map((s) => {
-          const isCur = year === curYear && s.month === curMonth;
-          const mp = monthlyMap.get(s.month);
-          const st = monthStatusMap.get(s.month);
-          const hasLogEntries = s.hasEntries;
-          return (
-            <div
-              key={s.month}
-              className={`mswb-cal-year-card${s.hasEntries ? ' has-entries' : ''}${isCur ? ' current' : ''}${mp ? ' has-monthly' : ''}`}
-              onClick={() => openMonth(s.month)}
-              title={`${year}年${s.month}月 · ${mp ? '已有月报' : (s.hasEntries ? '有日志' : '无日志')}`}
-            >
-              {/* 第一行：左上日期 + 右上三色灯(日志统计)/月报图标 */}
-              <div className="mswb-cal-year-head">
-                <span className="mswb-cal-year-month">{s.month}月</span>
-                <div className="mswb-cal-year-head-right">
-                  {st && (st.green > 0 || st.yellow > 0 || st.red > 0) && (
-                    <span className="mswb-cal-year-lights">
-                      {st.green > 0 && <span className="mswb-cal-year-lamp green">{st.green}</span>}
-                      {st.yellow > 0 && <span className="mswb-cal-year-lamp yellow">{st.yellow}</span>}
-                      {st.red > 0 && <span className="mswb-cal-year-lamp red">{st.red}</span>}
-                    </span>
-                  )}
-                  {mp ? (
-                    <button className="mswb-cal-year-open-ico" onClick={(ev) => { ev.stopPropagation(); openMonthly(mp.filePath); }} title="打开当月月报">📄</button>
-                  ) : hasLogEntries ? (
-                    <button className="mswb-cal-year-open-ico" onClick={(ev) => { ev.stopPropagation(); openMonth(s.month); }} title="进入月视图">✍️</button>
-                  ) : null}
-                </div>
-              </div>
-              {/* 中部纵向：概述总览（有/无月报） */}
-              <div className="mswb-cal-year-body">
-                {mp ? (
-                  <div className="mswb-cal-year-ai" title={mp.aiSummary}>{mp.aiSummary || '本月无概述'}</div>
-                ) : hasLogEntries ? (
-                  <div className="mswb-cal-year-ai mswb-cal-year-ai-empty">本月有日志，尚未写月报</div>
-                ) : (
-                  <div className="mswb-cal-year-ai mswb-cal-year-ai-empty">无记录</div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
 }
 
 /** 状态 → 圆点颜色 */
@@ -824,6 +709,210 @@ function statusColor(s: string): string {
   if (s.includes('🟡')) return 'var(--color-yellow, #f5a623)';
   if (s.includes('🔴')) return 'var(--color-red, #e5484d)';
   return 'var(--text-faint)';
+}
+
+// ===== 抽屉视图主组件 =====
+const CHIP_COLORS = ['#e5484d', '#3e63dd', '#30a46c', '#f5a623', '#9a41cf', '#d97706', '#0d9488', '#64748b', '#b45309', '#c0287c'];
+
+/** 稳定哈希：由项目名派生一个固定色板索引（同类目跨月同色） */
+function hashChipIndex(s: string, n: number): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % n;
+}
+
+/** 月卡忙度色块：按月内🟢🟡🔴占比切段（占满卡片宽） */
+function MonthBar({ st }: { st?: { green: number; yellow: number; red: number } }) {
+  const total = st ? st.green + st.yellow + st.red : 0;
+  if (!total) return null;
+  const seg = (v: number, c: string, key: string) =>
+    v > 0 ? <span key={key} style={{ flexGrow: v, background: c }} className="mswb-cal-monthbar-seg" /> : null;
+  return (
+    <div className="mswb-cal-monthbar" title="忙碌强度">
+      {seg(st.green, 'var(--color-green, #30a46c)', 'g')}
+      {seg(st.yellow, 'var(--color-yellow, #f5a623)', 'y')}
+      {seg(st.red, 'var(--color-red, #e5484d)', 'r')}
+    </div>
+  );
+}
+
+/** 月卡内的占比条：一行色块按项目命中占比切段；下方一行小图例（色点+项目名） */
+function ChipBar({ chips, onChip }: {
+  chips: YearProjectChip[];
+  onChip?: (label: string) => void;
+}) {
+  const total = chips.reduce((s, c) => s + c.count, 0);
+  if (total === 0) return null;
+  return (
+    <div className="mswb-cal-chipbar">
+      <div className="mswb-cal-chipbar-row">
+        {chips.map((c) => (
+          <span
+            key={c.label}
+            className="mswb-cal-chipbar-seg"
+            title={`${c.label} · ${c.count} 条`}
+            style={{
+              flexGrow: c.count,
+              background: c.other ? 'var(--color-grey, #888)' : CHIP_COLORS[hashChipIndex(c.label, CHIP_COLORS.length)],
+            }}
+          />
+        ))}
+      </div>
+      <div className="mswb-cal-chipbar-legend">
+        {chips.map((c) => (
+          <span
+            key={c.label}
+            className={`mswb-cal-chipbar-item${c.other ? ' other' : ''}`}
+            onClick={(e) => { e.stopPropagation(); onChip?.(c.label); }}
+            title={`${c.label} · ${c.count} 条`}
+          >
+            <i style={{ background: c.other ? 'var(--color-grey, #888)' : CHIP_COLORS[hashChipIndex(c.label, CHIP_COLORS.length)] }} />
+            {c.label.replace(/^[^\s]+\s/, '')}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** 抽屉视图：左栏 3 月卡（占比条+图例）+ 右栏选中月周卡（纵向，复用季视图卡片） */
+function DrawerTableView({
+  monthQuarters, monthStatusMap, monthlyMap, yearMonthChips, selMonth,
+  monthLogMeta, drawerWeeks, onSelectMonth, onEnterMonth, openMonthly, openReport,
+  createWeekly, createMonthly,
+}: {
+  monthQuarters: number[];
+  monthStatusMap: Map<number, { green: number; yellow: number; red: number }>;
+  monthlyMap: Map<number, { filePath: string; aiSummary: string }>;
+  yearMonthChips: Map<number, YearProjectChip[]>;
+  selMonth: number;
+  monthLogMeta: Map<number, { logDays: number; logCount: number }>;
+  drawerWeeks: { row: QuarterWeekRow; report?: { filePath: string; aiSummary: string; projects: string[] } }[];
+  onSelectMonth: (m: number) => void;
+  onEnterMonth: (m: number) => void;
+  openMonthly: (relPath: string) => void;
+  openReport: (relPath: string) => void;
+  createWeekly: (weekStart: string) => void;
+  createMonthly: (m: number) => void;
+}) {
+  return (
+    <div className="mswb-cal-drawer">
+      {/* 左栏：季度三月的月卡 */}
+      <div className="mswb-cal-drawer-months">
+        {monthQuarters.map((m) => {
+          const isSel = m === selMonth;
+          const st = monthStatusMap.get(m);
+          const mp = monthlyMap.get(m);
+          const chips = yearMonthChips.get(m);
+          const rangeDays = monthLogMeta.get(m);
+          return (
+            <div
+              key={m}
+              className={`mswb-cal-drawer-month${isSel ? ' selected' : ''}${(rangeDays?.logCount ?? 0) > 0 ? ' has-log' : ''}`}
+              onClick={() => onSelectMonth(m)}
+              title={mp ? `${m}月 · 已有月报` : `${m}月`}
+            >
+              <div className="mswb-cal-year-head" style={{ marginBottom: 4 }}>
+                <span className="mswb-cal-year-month">{m}月</span>
+                <div className="mswb-cal-year-head-right">
+                  {st && (st.green > 0 || st.yellow > 0 || st.red > 0) && (
+                    <span className="mswb-cal-year-lights" title="🟢在线 / 🟡有点忙 / 🔴忙炸">
+                      {st.green > 0 && <span className="mswb-cal-year-lamp green">{st.green}</span>}
+                      {st.yellow > 0 && <span className="mswb-cal-year-lamp yellow">{st.yellow}</span>}
+                      {st.red > 0 && <span className="mswb-cal-year-lamp red">{st.red}</span>}
+                    </span>
+                  )}
+                  {mp ? (
+                    <button className="mswb-cal-year-open-ico" onClick={(ev) => { ev.stopPropagation(); openMonthly(mp.filePath); }} title="打开当月月报">📄</button>
+                  ) : (
+                    <button className="mswb-cal-year-open-ico" onClick={(ev) => { ev.stopPropagation(); createMonthly(m); }} title="一键创建本月月报骨架">➕</button>
+                  )}
+                  {(rangeDays?.logCount ?? 0) > 0 && (
+                    <button className="mswb-cal-year-open-ico" onClick={(ev) => { ev.stopPropagation(); onEnterMonth(m); }} title="进入月视图">✍️</button>
+                  )}
+                </div>
+              </div>
+              {/* 占比条：项目命中占比 */}
+              {chips && chips.length > 0 ? (
+                <ChipBar chips={chips} />
+              ) : (
+                <div className="mswb-cal-drawer-empty">无记录</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {/* 右栏：选中月的周卡（纵向） */}
+      <div className="mswb-cal-drawer-weeks">
+        {drawerWeeks.length === 0 ? (
+          <div className="mswb-cal-drawer-empty-big">本月暂无周记录</div>
+        ) : (
+          drawerWeeks.map(({ row, report }, ri) => {
+            const sM = parseInt(row.weekStart.slice(5, 7));
+            const sD = parseInt(row.weekStart.slice(8, 10));
+            let green = 0, yellow = 0, red = 0, logDays = new Set<number>();
+            for (const c of row.cells) {
+              if (!c) continue;
+              if (c.count > 0) logDays.add(c.day);
+              for (const s of c.statuses) {
+                if (s.includes('🟢')) green++;
+                else if (s.includes('🟡')) yellow++;
+                else if (s.includes('🔴')) red++;
+              }
+            }
+            const hasLog = logDays.size > 0 || (report?.projects.length ?? 0) > 0;
+            // 周范围文案：7月1周（7/1~7/5）——统一 M/D 格式，兼容跨月/跨季
+            const eDNum = parseInt(row.weekEnd.slice(8, 10));
+            const eMNum = parseInt(row.weekEnd.slice(5, 7));
+            const wkInMonth = Math.floor((sD - 1) / 7) + 1;
+            const rangeLabel = `${sM}月${wkInMonth}周（${sM}/${sD}~${eMNum}/${eDNum}）`;
+            return (
+              <div
+                key={ri}
+                className={`mswb-cal-week-card${report ? ' with-report' : ''}${hasLog ? ' has-log' : ''}`}
+                title="点击可编辑当周日志"
+              >
+                <div className="mswb-cal-week-head">
+                  <span className="mswb-cal-week-range">{rangeLabel}</span>
+                  <div className="mswb-cal-week-head-right">
+                    {hasLog && (
+                      <span className="mswb-cal-week-lights">
+                        {green > 0 && <span className="mswb-cal-week-lamp green">{green}</span>}
+                        {yellow > 0 && <span className="mswb-cal-week-lamp yellow">{yellow}</span>}
+                        {red > 0 && <span className="mswb-cal-week-lamp red">{red}</span>}
+                      </span>
+                    )}
+                    {report && (
+                      <button className="mswb-cal-report-btn" onClick={(ev) => { ev.stopPropagation(); openReport(report.filePath); }} title="打开当周周报">📄</button>
+                    )}
+                  </div>
+                </div>
+                <div className="mswb-cal-week-main">
+                  {report ? (
+                    <>
+                      <div className="mswb-cal-week-tags">
+                        {(report.projects.length ? report.projects : ['本周无项目标签']).slice(0, 6).map((t, i) => (
+                          <span key={i} className="mswb-cal-week-tag">
+                            {t.replace(/[（(][^）)]*[）)]/g, '').replace(/\s+/g, ' ').trim()}
+                          </span>
+                        ))}
+                      </div>
+                      {report.aiSummary && <div className="mswb-cal-week-ai" title={report.aiSummary}>{report.aiSummary}</div>}
+                    </>
+                  ) : (
+                    <div className="mswb-cal-week-ai mswb-cal-week-ai-empty">
+                      <div>{hasLog ? '本周有日志，暂无周报' : '— 本周无记录 —'}</div>
+                      <div><button className="mswb-cal-cmd" onClick={(ev) => { ev.stopPropagation(); createWeekly(row.weekStart); }} title="创建周工作总结骨架文件">➕ 一键生成周报</button></div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ===== 项目总览面板 =====

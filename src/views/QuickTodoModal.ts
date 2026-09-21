@@ -78,13 +78,13 @@ export class QuickTodoModal extends Modal {
   private targetParent: HTMLElement | null = null;
   private btnRow: HTMLElement | null = null;
 
-  constructor(private app: App) {
-    super(app);
+  constructor(initialApp: App) {
+    super(initialApp);
     this.text = '';
     this.startDate = '';
     this.dueDate = '';
     this.priority = '';
-    this.choices = getProjectChoices(app);
+    this.choices = getProjectChoices(initialApp);
     this.filterCategory = null;
     this.filteredChoices = this.choices;
     this.selectedPath = this.choices[0]?.path ?? '';
@@ -250,7 +250,8 @@ export class QuickTodoModal extends Modal {
     if (this.dueDate) taskLine += ` 📅 ${this.dueDate}`;
 
     try {
-      await this.app.vault.process(file, (content) => {
+      // file 在此处逻辑上必为 TFile：上方 if 块内已 return 或赋值 create() 返回的 TFile，断言收窄
+      await this.app.vault.process(file as TFile, (content) => {
         if (this.isDiary) {
           const doneSection = content.match(/^##\s+.*搞定.*$/m);
           if (doneSection) {

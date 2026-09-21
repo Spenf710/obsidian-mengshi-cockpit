@@ -1,5 +1,69 @@
 /* ===== 猛士驾驶舱 — 样式表 ===== */
 
+/* ===== 设置页 ===== */
+/* 搜索框所在行：过滤时保持可见，避免"搜索项全隐藏→无法继续输入"；滚动时吸附在顶部 */
+.mswb-set-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--background-primary);
+}
+/* 折叠分组标题：可点击，带三角指示；折叠时隐藏组内设置项 */
+.mswb-set-box .setting-item-heading {
+  cursor: pointer;
+  user-select: none;
+  border-radius: 6px;
+}
+.mswb-set-box .setting-item-heading:hover {
+  background: var(--background-modifier-hover);
+}
+.mswb-set-box .setting-item-heading::before {
+  content: '▾';
+  margin-right: 6px;
+  opacity: 0.6;
+  font-size: 0.85em;
+  transition: transform 0.15s;
+}
+.mswb-set-box .setting-item-heading.is-collapsed::before {
+  transform: rotate(-90deg);
+}
+/* 折叠命中隐藏：data-col=1 的元素隐藏（次级分组独立控制） */
+[data-col="1"] {
+  display: none !important;
+}
+/* 设置项行距加大 + 左侧留白 */
+.mswb-settings .setting-item {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.mswb-settings .setting-item:last-child {
+  border-bottom: none;
+}
+/* 次级分组整体左侧留白（文字不再贴边） */
+.mswb-set-sub {
+  margin: 8px 0 0;
+  padding-left: 14px;
+}
+/* 次级分组标题：细分隔线 + 小号字 + 可点击 */
+.mswb-set-sub .setting-item-heading {
+  font-size: 0.8em;
+  opacity: 0.8;
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 8px;
+  border-radius: 0;
+  cursor: pointer;
+}
+.mswb-set-sub .setting-item-heading::before {
+  content: '▾';
+  margin-right: 6px;
+  opacity: 0.6;
+  font-size: 0.85em;
+  transition: transform 0.15s;
+}
+.mswb-set-sub .setting-item-heading.is-collapsed::before {
+  transform: rotate(-90deg);
+}
+
 /* 根容器 */
 .mengshi-workbench-root {
   height: 100%;
@@ -674,7 +738,7 @@
   justify-content: space-between;
 }
 .mswb-cal-year-month {
-  font-size: 0.92em;
+  font-size: 1.15em;
   font-weight: 700;
   color: var(--text-normal);
   letter-spacing: 0.5px;
@@ -702,6 +766,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.mswb-cal-year-lights {
+  cursor: default;
 }
 .mswb-cal-year-lamp.green { background: var(--color-green, #30a46c); }
 .mswb-cal-year-lamp.yellow { background: var(--color-yellow, #f5a623); }
@@ -720,42 +788,73 @@
   background: var(--background-modifier-border);
   transform: scale(1.15);
 }
-/* 中部：状态 + 概述 */
+/* 中部：项目胶囊 + 工作量 + 概述 */
 .mswb-cal-year-body {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   flex: 1;
   margin-top: 4px;
+  min-height: 0;
+  overflow: hidden;
 }
-.mswb-cal-year-status {
+/* 项目胶囊（复用季视图标签视觉） */
+.mswb-cal-year-chips {
   display: flex;
   gap: 4px;
-  justify-content: flex-start;
-  margin: 4px 0;
+  flex-wrap: wrap;
+  margin: 2px 0;
 }
-.mswb-cal-year-dot {
-  min-width: 16px;
-  height: 16px;
-  border-radius: 8px;
-  line-height: 16px;
-  font-size: 0.64em;
-  font-weight: 700;
-  color: #fff;
-  padding: 0 4px;
+.mswb-cal-year-chip {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 3px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-weight: 600;
+  font-size: 0.66em;
+  white-space: nowrap;
+  line-height: 1.5;
+  color: var(--text-normal);
 }
+.mswb-cal-year-chip i {
+  font-style: normal;
+  font-size: 0.82em;
+  font-weight: 700;
+  color: var(--text-muted);
+  opacity: 0.9;
+}
+.mswb-cal-year-chip.other {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+/* 工作量行：天数/条数 */
+.mswb-cal-year-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+  font-size: 0.64em;
+  color: var(--text-faint);
+}
+.mswb-cal-year-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+/* 月报概述（压缩为 2 行，hover 可看全文） */
 .mswb-cal-year-ai {
   font-size: 0.7em;
   color: var(--text-muted);
   line-height: 1.5;
   display: -webkit-box;
-  -webkit-line-clamp: 5;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   margin-top: 4px;
+  word-break: break-word;
 }
 .mswb-cal-year-ai-empty {
   color: var(--text-faint);
@@ -890,6 +989,21 @@
 .mswb-cal-report-btn:hover {
   opacity: 1;
   transform: scale(1.1);
+}
+/* 周卡/月卡空态里的一键生成按钮 */
+.mswb-cal-cmd {
+  margin-top: 4px;
+  padding: 2px 10px;
+  font-size: 0.75em;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  color: var(--text-normal);
+  cursor: pointer;
+}
+.mswb-cal-cmd:hover {
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
 }
 
 /* 当天 */
@@ -4114,4 +4228,132 @@
 .mswb-modal-noflicker .modal {
   animation: none !important;
   transform: none !important;
+}
+
+/* ===== 抽屉视图（DrawerTableView）===== */
+.mswb-cal-drawer {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+  padding: 2px 4px;
+}
+/* 左栏：季度 3 月卡（纵向堆叠，占满高度） */
+.mswb-cal-drawer-months {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 190px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+.mswb-cal-drawer-month {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 10px 10px 12px;
+  background: var(--background-primary-alt);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  /* 三张卡片均分高度，占满左侧整屏 */
+  flex: 1;
+  min-height: 0;
+}
+.mswb-cal-drawer-month:hover {
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+  border-color: var(--interactive-accent);
+}
+.mswb-cal-drawer-month.selected {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+.mswb-cal-drawer-month.has-log {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 40%, transparent);
+}
+/* 占比条：项目命中占比 */
+.mswb-cal-chipbar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0;
+}
+.mswb-cal-chipbar-row {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  width: 100%;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.mswb-cal-chipbar-seg {
+  height: 100%;
+  display: block;
+  border-radius: 2px;
+}
+.mswb-cal-chipbar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 0.66em;
+  color: var(--text-muted);
+}
+.mswb-cal-chipbar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+}
+.mswb-cal-chipbar-item i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.mswb-cal-chipbar-item.other {
+  color: var(--text-faint);
+}
+/* 左栏空态 + 一键进入 */
+.mswb-cal-drawer-empty {
+  font-size: 0.7em;
+  color: var(--text-faint);
+}
+.mswb-cal-drawer-clearBtn {
+  background: none;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.68em;
+  color: var(--text-accent);
+  cursor: pointer;
+  align-self: flex-start;
+}
+.mswb-cal-drawer-clearBtn:hover {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+/* 右栏：选中月的周卡（纵向列表） */
+.mswb-cal-drawer-weeks {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  min-width: 0;
+}
+.mswb-cal-drawer-weeks .mswb-cal-week-card {
+  width: 100%;
+  flex-shrink: 0;
+}
+.mswb-cal-drawer-empty-big {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-faint);
+  font-size: 0.8em;
 }

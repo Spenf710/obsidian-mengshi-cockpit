@@ -49,8 +49,8 @@ export class CreateProjectModal extends Modal {
 
     // 项目名称 + 项目目的（并排）
     const r1 = contentEl.createDiv({ cls: 'mswb-modal-inlinerow' });
-    this.makeField(r1, '项目名称', t => { t.placeholder = '例：XX管理系统'; t.onChange(v => this.name = v); });
-    this.makeField(r1, '项目目的', t => { t.placeholder = '解决什么问题...'; t.onChange(v => this.purpose = v); });
+    this.makeField(r1, '项目名称', t => { t.setPlaceholder('例：XX管理系统'); t.onChange(v => this.name = v); });
+    this.makeField(r1, '项目目的', t => { t.setPlaceholder('解决什么问题...'); t.onChange(v => this.purpose = v); });
 
     // 所属标签 + 项目类别（并排）
     const r2 = contentEl.createDiv({ cls: 'mswb-modal-inlinerow' });

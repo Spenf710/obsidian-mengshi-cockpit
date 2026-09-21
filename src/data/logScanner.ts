@@ -185,18 +185,18 @@ export function buildQuarterGrid(
   const endMonth = startMonth + 2;
   const cols = calendarColumns(showSat, showSun);
 
-  // 季度开始前的周日：可能落在上一季度（用于包含边界周）
+  // 季度开始前的周一：可能落在上一季度（用于包含边界周）
   const qStart = new Date(year, startMonth - 1, 1);
-  const lead = qStart.getDay(); // 0=Sun
+  const lead = (qStart.getDay() + 6) % 7; // 距上周一
   const periodFrom = new Date(year, startMonth - 1, 1);
-  periodFrom.setDate(periodFrom.getDate() - lead); // 季度首日前导周日
+  periodFrom.setDate(periodFrom.getDate() - lead);
 
-  // 季度结束后的周六：可能落在下一季度
+  // 季度结束后的周日：可能落在下一季度
   const qEnd = new Date(year, endMonth, 0); // 季度最后一天
   const trail = qEnd.getDay();
-  const periodTo = new Date(year, endMonth - 1, qEnd.getDate() + (6 === trail ? 0 : 6 - trail));
+  const periodTo = new Date(year, endMonth - 1, qEnd.getDate() + (0 === trail ? 0 : 7 - trail));
 
-  // 按自然周（回退周日）分组；仅收录「落在季度内」的日期
+  // 按自然周（回退周一）分组；仅收录「落在季度内」的日期
   const periods = new Map<number, QuarterDayCell[]>();
   const scanFrom = new Date(periodFrom);
   const scanTo = new Date(periodTo);
@@ -208,8 +208,9 @@ export function buildQuarterGrid(
     if (dow === 6 && !showSat) continue;
     if (dow === 0 && !showSun) continue;
 
+    // 周一作为每周起始（周一~周日）
     const ws = new Date(d);
-    ws.setDate(ws.getDate() - dow);
+    ws.setDate(ws.getDate() - (dow === 0 ? 6 : dow - 1));
     ws.setHours(0, 0, 0, 0);
     const weekStart = ws.getTime();
 
@@ -236,11 +237,12 @@ export function buildQuarterGrid(
     const cells: (QuarterDayCell | null)[] = cols.map(() => null);
     for (const cell of periods.get(ws)!) {
       const date = new Date(cell.year, cell.month - 1, cell.day);
-      const col = date.getDay() === 0 ? 6 : date.getDay() - 1;
+      // 列序：周日=0、周一~周六=1~6（与「周一开始」的列序 index 对齐）
+      const col = date.getDay();
       const colIdx = cols.findIndex((c) => c.index === col);
       if (colIdx >= 0) cells[colIdx] = cell;
     }
-    // 计算周范围（含跨出季度的首尾，用于周标题）
+    // 计算周范围（含跨出季度的首尾，用于周标题）；周一开始 → 结束为周日
     const se = new Date(sd); se.setDate(se.getDate() + 6);
     rows.push({
       weekStart: `${sd.getFullYear()}-${String(sd.getMonth() + 1).padStart(2, '0')}-${String(sd.getDate()).padStart(2, '0')}`,
@@ -272,6 +274,60 @@ export function buildYearSummaries(logs: Map<string, LogEntry[]>): YearMonthSumm
     }
     out.push({ month: m, logDays: days.size, logCount: count, hasEntries: count > 0 });
   }
+  return out;
+}
+
+// ===== 年视图项目胶囊（复用上方 PROJECT_EMOJI 归类日志「一句话」） =====
+
+/** 年视图单颗项目胶囊 */
+export interface YearProjectChip {
+  label: string;  // 如「🖥️ 猛士驾驶舱」
+  count: number;  // 该月命中此项目的日志条数
+  other?: boolean; // 未命中任何映射的日志归入「其他事务」
+}
+
+const CHIP_MAX_COUNT = 4;      // 每卡最多展示胶囊数
+const CHIP_NAME_MAX = 8;       // 显示名最长字符（超出省略展示）
+
+// 惰性构建：CHIP_RULES 依赖下方 PROJECT_EMOJI，顶层直接初始化会触发 TDZ 报错
+let _chipRules: { re: RegExp; em: string; key: string }[] | null = null;
+function getChipRules() {
+  if (!_chipRules) {
+    _chipRules = PROJECT_EMOJI.map(([re, em]) => ({
+      re,
+      em,
+      key: re.source.split('|')[0].trim(),
+    }));
+  }
+  return _chipRules;
+}
+
+/** 从某月日志聚合高频项目胶囊（按日志条数降序取前 N，未归类进「其他事务」） */
+export function buildYearProjectChips(logs: Map<string, LogEntry[]>, month: number): YearProjectChip[] {
+  const md = String(month).padStart(2, '0');
+  const counts = new Map<string, number>();
+  let other = 0;
+  let total = 0;
+  const rules = getChipRules();
+  for (const [dateStr, arr] of logs) {
+    if (dateStr.slice(5, 7) !== md) continue;
+    for (const e of arr) {
+      total++;
+      const hit = rules.find((r) => r.re.test(e.summary));
+      if (!hit) { other++; continue; }
+      counts.set(hit.key, (counts.get(hit.key) ?? 0) + 1);
+    }
+  }
+  if (total === 0) return [];
+  const out: YearProjectChip[] = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, CHIP_MAX_COUNT)
+    .map(([key, count]) => {
+      const name = key.length > CHIP_NAME_MAX ? `${key.slice(0, CHIP_NAME_MAX)}…` : key;
+      const rule = rules.find((r) => r.key === key)!;
+      return { label: `${rule.em} ${name}`, count };
+    });
+  if (other > 0) out.push({ label: '🗒️ 其他事务', count: other, other: true });
   return out;
 }
 
@@ -342,11 +398,11 @@ export function stripLeadingEmoji(name: string): string {
 
 /** 判断是否为「非项目」的板块标题（章节/工作线/成果/风险等），应从项目标签过滤 */
 function isSectionHeading(raw: string): boolean {
-  if (/^(✅|📅|📌|📊|⚠️|🔧|🤝|🔬|📝|🗂️|🎨|🏗️|📖|🆕)/.test(raw) && !EMOJI_RE.test(raw.slice(6))) return true;
-  return /^(一|二|三|四|五|六|七|八|九|十)[、.]/.test(raw)
-    || /^工作线[一二三四五六]/.test(raw)
-    || /^(核心|主要|其他|风险|资源|产出|技术要点|会议与培训|总结与建议|需要支持|关键成果|关键目标|项目进展|本周概览|上周|本周|下周|相关笔记|问题|成果|待办)/.test(raw)
-    || ['会议与培训', '部门事务', '知识沉淀', '其他', '其他工作', '问题', '风险与应对', '资源需求', '协同建议', '产出清单', '技术要点'].some((s) => raw.includes(s));
+  const t = raw.trim();
+  return /^(一|二|三|四|五|六|七|八|九|十)[、.]/.test(t)
+    || /^工作线[一二三四五六]/.test(t)
+    || /^(核心|主要|其他|风险|资源|产出|技术要点|会议与培训|总结与建议|需要支持|关键成果|关键目标|项目进展|本周概览|上周|本周|下周|相关笔记|问题|成果|待办)/.test(t)
+    || ['会议与培训', '部门事务', '知识沉淀', '其他', '其他工作', '问题', '风险与应对', '资源需求', '协同建议', '产出清单', '技术要点'].some((s) => t.includes(s));
 }
 
 /** 周报摘要：供季视图每周卡片展示 */
@@ -421,20 +477,35 @@ export async function scanWeeklyReports(app: App, year: number): Promise<WeeklyR
         planIdx > doneIdx && doneIdx >= 0 ? planIdx : undefined,
       );
       const seen = new Set<string>();
-      for (const l of slice.split('\n')) {
-        const m = l.match(/^#{2,3}\s+(.+)$/);
+      const lines = slice.split('\n');
+      // 标题式周报（有 ### 项目名）→ 只取标题为项目标签；纯 bullet 式周报（如 7/27~31）→ 取「- **粗体**」顶层条目
+      // 段标记判断（hasHeadings 用途）：直接比较「## ✅ 本周完成」表头候选中是否含显式 h2 区间表头。
+      // 反例杜绝：若用 startsWith('✅'|'📅') 或字符类 /^[✅📅]/ 判断任意 h3 标题行，
+      // 📉/📋/👥/📊（均与 ✅/📅 共享 UTF-16 高代理项）会被误判为段标记 → 非标题式（bullet 解析模式），
+      // 使 h3 序号在 `[#]\d[.、]` 剥离后保留 emoji 前缀而被丢弃（如「📉 低合格率…」），最终只剩 🧠/🤖 两条。
+      const isSectionMarker = (s: string) => { const t = s.trim(); return t === '✅ 本周完成' || t === '📅 下周计划'; };
+      const hasHeadings = lines.some((l) => {
+        const h = l.match(/^(#{2,3})\s+(.+)$/);
+        if (!h) return false;
+        return !isSectionMarker(h[2].trim());
+      });
+      for (const l of lines) {
+        let m = hasHeadings
+          ? l.match(/^(#{2,3})\s+(.+)$/)
+          : l.match(/^\s*-\s*\*\*(.+?)\*\*/);  // 纯 bullet 式：粗体段 = 项目名
         if (!m) continue;
-        // 剔除尾随任意圆括号内容（如「（运维中）」「（4月7日-9日）」），但保留连字符（PPAP-RPA）
-        let t = m[1]
+        // 标题式取组2（标题名），bullet 式取组1（粗体段）
+        let raw = (hasHeadings ? m[2] : m[1]) as string;
+        let t = raw
           .replace(/^[\d]+[.、)）]?\s*/, '')   // 去序号
           .replace(/\s*[([（][^()）)]*[)）]\s*$/, '')  // 去尾随括号（含全/半角）
           .trim();
-        if (t.length < 2 || t.length > 28) continue;
-        if (isSectionHeading(t)) continue;      // 过滤「会议与培训/工作线X/风险…」等非项目标题
-        t = stripLeadingEmoji(t);           // 剥离开头已带 emoji，避免二次叠加
-        if (!t) continue;
-        const labeled = ensureProjectEmoji(t); // 统一按映射补 emoji 前缀
-        if (!seen.has(labeled)) { seen.add(labeled); projects.push(labeled); }
+        if (t.length < 2 || t.length > 30) continue;
+        if (isSectionMarker(t.trim())) continue;  // 跳过头尾的「✅本周完成」等
+        // 通用剪切：剥离开头 emoji 后判断是否为通用板块标题
+        const stripped = t.replace(/^(\p{Extended_Pictographic}|\u{200D}|\u{FE0F}|\s)+/u, '').trim();
+        if (!stripped || isSectionHeading(stripped)) continue;
+        if (!seen.has(t)) { seen.add(t); projects.push(t); }
       }
       out.push({
         filePath: file.path,
@@ -465,7 +536,9 @@ export async function scanMonthlyReports(app: App, year: number): Promise<Monthl
       const content = await app.vault.cachedRead(file);
       const fm = parseFrontmatter(content);
       // 状态统计（正文 > 📝 行 或 frontmatter）
-      const statLine = content.match(/🟢 在线\s*(\d+)\s*天[^🔴]*🟡 有点忙\s*(\d+)\s*天[^🔴]*🔴 忙炸了\s*(\d+)\s*天/) ||
+      // 三段分别宽松捕获：emoji 与天数之间允许「在线/有点忙/忙炸了」等任意非数字文字（可带冒号/空格）；
+      // 不支持首尾前段缺失（只有绿/只有红）或换行分隔的统计行不计入三色灯。
+      const statLine = content.match(/🟢[^\d🟡🔴]{0,6}?(\d+)\s*天\s*[^\d🟡🔴]+?🟡[^\d🔴]{0,6}?(\d+)\s*天\s*[^\d🔴]+?🔴[^\d]{0,6}?(\d+)\s*天/) ||
                        content.match(/🟢\s*(\d+)[^🟡]*🟡\s*(\d+)[^🔴]*🔴\s*(\d+)/);
       let statuses: { green: number; yellow: number; red: number } | null = null;
       if (statLine) {
@@ -483,16 +556,16 @@ export async function scanMonthlyReports(app: App, year: number): Promise<Monthl
   return out;
 }
 
-/** 星期列固定顺序（index：0=周日 … 6=周六），周日列置左、周六列置右 */
+/** 星期列固定顺序（index：0=周日 … 6=周六），周日列置左、周六列置右（传统布局） */
 export function calendarColumns(showSaturday: boolean, showSunday: boolean): { label: string; index: number }[] {
-  const order = [6, 0, 1, 2, 3, 4, 5]; // 日 一 二 三 四 五 六
+  const order = [0, 1, 2, 3, 4, 5, 6]; // 日 一 二 三 四 五 六
   const cols: { label: string; index: number }[] = [];
   for (const idx of order) {
     if (idx === 5 && !showSaturday) continue;
     if (idx === 6 && !showSunday) continue;
-    if (idx === 5) cols.push({ label: '六', index: idx });
-    else if (idx === 6) cols.push({ label: '日', index: idx });
-    else cols.push({ label: '一二三四五'[idx], index: idx });
+    if (idx === 0) cols.push({ label: '日', index: idx });
+    else if (idx === 6) cols.push({ label: '六', index: idx });
+    else cols.push({ label: '一二三四五'[idx - 1], index: idx });
   }
   return cols;
 }
@@ -545,7 +618,7 @@ export function buildCalendarGrid(
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(year, month - 1, d);
     const dow = date.getDay(); // 0=Sun
-    const col = dow === 0 ? 6 : dow - 1; // 0=Mon … 6=Sun
+    const col = dow; // 0=Sun … 6=Sat（与「周日列置左」的列序 index 一致）
     // 只在配置的显示列内构建格子（周六/周日可隐藏）
     if (dow === 6 && !showSat) continue;
     if (dow === 0 && !showSun) continue;

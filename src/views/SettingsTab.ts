@@ -10,10 +10,34 @@ import {
   getFeishuConfig,
   setFeishuConfig,
 } from '../data/settings';
-import { installHarvestSkill } from '../data/harvestSkill';
+import { installHarvestSkill, hasHarvestSkill } from '../data/harvestSkill';
+import { installWorkReportSkill, hasWorkReportSkill } from '../data/workReportSkill';
 
+// ===== 模块级防抖写盘（会话/飞书配置，避免逐键写 data.json） =====
+// settings.ts 的 setSessionConfig/setFeishuConfig 每次调用都会 persist 整份 data.json，
+// 输入框逐键触发会导致频繁写盘。这里按字段防抖：停止输入 600ms 后落盘一次。
+const debounceTimers = new Map<string, number>();
+function debounceRun(key: string, fn: () => void): void {
+  const t = debounceTimers.get(key);
+  if (t !== undefined) window.clearTimeout(t);
+  debounceTimers.set(key, window.setTimeout(() => { debounceTimers.delete(key); fn(); }, 600));
+}
+function setSessionConfigDebounced(key: string, cfg: Parameters<typeof setSessionConfig>[0]): void {
+  debounceRun('sess:' + key, () => void setSessionConfig(cfg));
+}
+function setFeishuConfigDebounced(key: string, cfg: Parameters<typeof setFeishuConfig>[0]): void {
+  debounceRun('feishu:' + key, () => void setFeishuConfig(cfg));
+}
+
+/**
+ * 设置页（原生 + 折叠分组）：
+ * - 主分组 / 次级分组标题点击折叠，默认全部折叠
+ * - 顶栏搜索框（输入时自动展开全部 + 过滤）
+ * - 所有改动 onChange 即时生效，不再有「保存」按钮
+ */
 export class WorkbenchSettingsTab extends PluginSettingTab {
   private config: PluginConfig;
+  private debounceTimers = new Map<string, number>();
 
   constructor(app: App, private plugin: Plugin) {
     super(app, plugin);
@@ -24,57 +48,164 @@ export class WorkbenchSettingsTab extends PluginSettingTab {
     this.config = { ...getConfig() };
     const { containerEl } = this;
     containerEl.empty();
+    containerEl.addClass('mswb-settings');
 
-    new Setting(containerEl).setHeading().setName('猛士驾驶舱 设置');
+    // ===== 搜索（输入即展开 + 过滤） =====
+    const search = new Setting(containerEl)
+      .setName('搜索')
+      .addSearch((s) => {
+        s.setPlaceholder('搜索设置…');
+        s.onChange((v) => this.applyFilter(v.trim().toLowerCase()));
+      });
+    // 过滤时此行走常驻，避免搜索框自身被隐藏导致无法继续输入
+    search.settingEl.addClass('mswb-set-search');
 
-    // ===== 基础路径 =====
-    new Setting(containerEl).setHeading().setName('📁 基础路径');
+    // ===== 分组 =====
+    this.groupBase();
+    this.groupCategory();
+    this.groupPanel();
+    this.groupSession();
+    this.groupFeishu();
 
-    new Setting(containerEl)
+    // ===== 装配折叠（默认全折叠） =====
+    this.wireCollapse();
+  }
+
+  // ---------- 折叠装配 ----------
+
+  private collapseRegion(el: HTMLElement, want: boolean): void {
+    if (want) el.setAttribute('data-col', '1');
+    else el.removeAttribute('data-col');
+  }
+
+  private wireCollapse(): void {
+    const root = this.containerEl;
+
+    // 主分组：box 内第一个 heading 控制其后全部兄弟（含次级 sub）
+    root.querySelectorAll<HTMLElement>('.mswb-set-box').forEach((box) => {
+      const head = box.querySelector<HTMLElement>(':scope > .setting-item-heading');
+      if (!head) return;
+      const region = Array.from(box.children).filter((el) => el !== head) as HTMLElement[];
+      head.addClass('is-collapsed');
+      region.forEach((el) => this.collapseRegion(el, true));
+      head.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).closest('button')) return;
+        const coll = head.classList.toggle('is-collapsed');
+        region.forEach((el) => this.collapseRegion(el, coll));
+      });
+    });
+
+    // 次级分组：sub 内 heading 控制 mswb-set-sub-items
+    root.querySelectorAll<HTMLElement>('.mswb-set-sub').forEach((sub) => {
+      const sh = sub.querySelector<HTMLElement>(':scope > .setting-item-heading');
+      const items = sub.querySelector<HTMLElement>(':scope > .mswb-set-sub-items');
+      if (!sh || !items) return;
+      if (!sh.classList.contains('is-collapsed')) {
+        sh.addClass('is-collapsed');
+        this.collapseRegion(items, true);
+      }
+      sh.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).closest('button')) return;
+        const coll = sh.classList.toggle('is-collapsed');
+        this.collapseRegion(items, coll);
+      });
+    });
+  }
+
+  // ---------- 搜索过滤 ----------
+
+  private applyFilter(kw: string): void {
+    const root = this.containerEl;
+    // 搜索时全部展开（保证「搜索到但组折叠」不遮挡）
+    root.querySelectorAll<HTMLElement>('[data-col="1"]').forEach((el) => el.removeAttribute('data-col'));
+    root.querySelectorAll<HTMLElement>('.is-collapsed').forEach((el) => el.removeClass('is-collapsed'));
+
+    // 逐设置项过滤：搜索框所在行常驻（mswb-set-search），其余按文本匹配，不重建 DOM，
+    // 避免删空关键词时整页重建导致输入框失焦、折叠状态丢失。
+    root.querySelectorAll<HTMLElement>('.setting-item').forEach((el) => {
+      const pinned = el.classList.contains('mswb-set-search');
+      const keep = pinned || !kw || (el.textContent ?? '').toLowerCase().includes(kw);
+      el.style.display = keep ? '' : 'none';
+    });
+  }
+
+  // ---------- 即时持久化（输入防抖，避免逐键写盘） ----------
+
+  /** 输入类设置防抖：停止输入 600ms 后落盘一次，避免每次击键都写 data.json */
+  private persistDebounced(key: string, patch: Partial<PluginConfig>): void {
+    if (this.debounceTimers.has(key)) window.clearTimeout(this.debounceTimers.get(key)!);
+    const timer = window.setTimeout(() => {
+      this.debounceTimers.delete(key);
+      this.persist(patch);
+    }, 600);
+    this.debounceTimers.set(key, timer);
+  }
+
+  // ---------- 即时持久化 ----------
+
+  private persist(patch: Partial<PluginConfig>): void {
+    this.config = { ...this.config, ...patch };
+    void setConfig(this.config);
+  }
+
+  // ===== 📁 基础路径 =====
+  private groupBase(): void {
+    const box = this.containerEl.createDiv({ cls: 'mswb-set-box' });
+    new Setting(box).setHeading().setName('📁 基础路径');
+
+    new Setting(box)
       .setName('工作日志目录')
-      .setDesc('存放每日日志的文件夹路径')
+      .setDesc('存放每日日志的文件夹')
       .addText((t) =>
         t.setValue(this.config.workLogPath)
           .setPlaceholder('工作日志')
-          .onChange((v) => this.config.workLogPath = v));
+          .onChange((v) => this.persistDebounced('workLogPath', { workLogPath: v })));
 
-    new Setting(containerEl)
+    new Setting(box)
       .setName('日记模板')
-      .setDesc('创建新日记时使用的模板文件路径')
+      .setDesc('新建日记所用的模板文件')
       .addText((t) =>
         t.setValue(this.config.diaryTemplate)
           .setPlaceholder('templates/工作日志.md')
-          .onChange((v) => this.config.diaryTemplate = v));
+          .onChange((v) => this.persistDebounced('diaryTemplate', { diaryTemplate: v })));
 
-    new Setting(containerEl)
+    new Setting(box)
       .setName('项目根目录')
+      .setDesc('项目分类目录，可添加多个')
       .addText((t) => {
         t.setPlaceholder('例: 项目管理-客户');
         t.inputEl.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' && t.getValue().trim()) {
             this.config.projectRoots.push(t.getValue().trim());
             t.setValue('');
-            this.renderRoots(rootsContainer);
+            this.persist({ projectRoots: [...this.config.projectRoots] });
+            this.renderRoots(box);
           }
         });
       })
       .addButton((b) => b.setButtonText('+').onClick(() => {
-        const input = containerEl.querySelector('input[placeholder="例: 项目管理-客户"]') as HTMLInputElement;
+        const input = box.querySelector('input[placeholder="例: 项目管理-客户"]') as HTMLInputElement;
         if (input && input.value.trim()) {
           this.config.projectRoots.push(input.value.trim());
           input.value = '';
-          this.renderRoots(rootsContainer);
+          this.persist({ projectRoots: [...this.config.projectRoots] });
+          this.renderRoots(box);
         }
       }));
 
-    const rootsContainer = containerEl.createDiv();
-    this.renderRoots(rootsContainer);
+    const roots = box.createDiv();
+    this.renderRoots(roots);
+  }
 
-    // ===== 类别与车型 =====
-    new Setting(containerEl).setHeading().setName('🏷️ 类别与标签');
+  // ===== 🏷️ 类别与标签 =====
+  private groupCategory(): void {
+    const box = this.containerEl.createDiv({ cls: 'mswb-set-box' });
+    new Setting(box).setHeading().setName('🏷️ 类别与标签');
 
-    new Setting(containerEl)
+    let catBox: HTMLDivElement;
+    new Setting(box)
       .setName('默认类别')
+      .setDesc('项目分类的默认选项')
       .addText((t) => {
         t.setPlaceholder('新类别名');
         t.inputEl.addEventListener('keydown', (e) => {
@@ -82,25 +213,28 @@ export class WorkbenchSettingsTab extends PluginSettingTab {
             if (!this.config.baseCategories.includes(t.getValue().trim())) {
               this.config.baseCategories.push(t.getValue().trim());
               t.setValue('');
-              this.renderList(catContainer, this.config.baseCategories, (v) => { this.config.baseCategories = v; });
+              this.persist({ baseCategories: [...this.config.baseCategories] });
+              this.renderList(catBox, this.config.baseCategories, (v) => this.persist({ baseCategories: v }));
             }
           }
         });
       })
       .addButton((b) => b.setButtonText('+').onClick(() => {
-        const input = containerEl.querySelector('input[placeholder="新类别名"]') as HTMLInputElement;
+        const input = box.querySelector('input[placeholder="新类别名"]') as HTMLInputElement;
         if (input && input.value.trim() && !this.config.baseCategories.includes(input.value.trim())) {
           this.config.baseCategories.push(input.value.trim());
           input.value = '';
-          this.renderList(catContainer, this.config.baseCategories, (v) => { this.config.baseCategories = v; });
+          this.persist({ baseCategories: [...this.config.baseCategories] });
+          this.renderList(catBox, this.config.baseCategories, (v) => this.persist({ baseCategories: v }));
         }
       }));
+    catBox = box.createDiv();
+    this.renderList(catBox, this.config.baseCategories, (v) => this.persist({ baseCategories: v }));
 
-    const catContainer = containerEl.createDiv();
-    this.renderList(catContainer, this.config.baseCategories, (v) => { this.config.baseCategories = v; });
-
-    new Setting(containerEl)
+    let tagBox: HTMLDivElement;
+    new Setting(box)
       .setName('默认标签')
+      .setDesc('项目标签的默认选项')
       .addText((t) => {
         t.setPlaceholder('新标签名');
         t.inputEl.addEventListener('keydown', (e) => {
@@ -108,25 +242,29 @@ export class WorkbenchSettingsTab extends PluginSettingTab {
             if (!this.config.baseTags.includes(t.getValue().trim())) {
               this.config.baseTags.push(t.getValue().trim());
               t.setValue('');
-              this.renderList(tagContainer, this.config.baseTags, (v) => { this.config.baseTags = v; });
+              this.persist({ baseTags: [...this.config.baseTags] });
+              this.renderList(tagBox, this.config.baseTags, (v) => this.persist({ baseTags: v }));
             }
           }
         });
       })
       .addButton((b) => b.setButtonText('+').onClick(() => {
-        const input = containerEl.querySelector('input[placeholder="新标签名"]') as HTMLInputElement;
+        const input = box.querySelector('input[placeholder="新标签名"]') as HTMLInputElement;
         if (input && input.value.trim() && !this.config.baseTags.includes(input.value.trim())) {
           this.config.baseTags.push(input.value.trim());
           input.value = '';
-          this.renderList(tagContainer, this.config.baseTags, (v) => { this.config.baseTags = v; });
+          this.persist({ baseTags: [...this.config.baseTags] });
+          this.renderList(tagBox, this.config.baseTags, (v) => this.persist({ baseTags: v }));
         }
       }));
+    tagBox = box.createDiv();
+    this.renderList(tagBox, this.config.baseTags, (v) => this.persist({ baseTags: v }));
+  }
 
-    const tagContainer = containerEl.createDiv();
-    this.renderList(tagContainer, this.config.baseTags, (v) => { this.config.baseTags = v; });
-
-    // ===== Tab 页配置 =====
-    new Setting(containerEl).setHeading().setName('📑 Tab 页');
+  // ===== 🎛️ 面板显示 =====
+  private groupPanel(): void {
+    const box = this.containerEl.createDiv({ cls: 'mswb-set-box' });
+    new Setting(box).setHeading().setName('🎛️ 面板显示');
 
     const TAB_LABELS: Record<string, string> = {
       calendar: '📅 日历',
@@ -136,213 +274,165 @@ export class WorkbenchSettingsTab extends PluginSettingTab {
       feishu: '📡 飞书',
       sessions: '💬 会话',
     };
-
     for (const [key, label] of Object.entries(TAB_LABELS)) {
       const isVisible = this.config.visibleTabs?.[key] !== false;
-      new Setting(containerEl)
+      new Setting(box)
         .setName(label)
+        .setDesc('显示此面板')
         .addToggle((t) => t.setValue(isVisible).onChange((v) => {
-          if (!this.config.visibleTabs) this.config.visibleTabs = {};
-          this.config.visibleTabs[key] = v;
+          const visibleTabs = { ...(this.config.visibleTabs ?? {}) };
+          visibleTabs[key] = v;
+          this.persist({ visibleTabs });
         }));
     }
 
-    // ===== 日历显示 =====
-    new Setting(containerEl).setHeading().setName('📅 日历显示');
+    // 次级：日历显示
+    const sub = box.createDiv({ cls: 'mswb-set-sub' });
+    new Setting(sub).setHeading().setName('日历显示');
+    const subItems = sub.createDiv({ cls: 'mswb-set-sub-items' });
 
-    new Setting(containerEl)
+    new Setting(subItems)
       .setName('显示周六')
-      .setDesc('日历是否显示周六列（默认显示；如排班不涉及周六可关闭）')
-      .addToggle((t) => t.setValue(this.config.showSaturday !== false).onChange((v) => { this.config.showSaturday = v; }));
-
-    new Setting(containerEl)
+      .setDesc('日历是否显示周六列')
+      .addToggle((t) => t.setValue(this.config.showSaturday !== false).onChange((v) => this.persist({ showSaturday: v })));
+    new Setting(subItems)
       .setName('显示周日')
-      .setDesc('日历是否显示周日列（默认显示；周日也常需要安排工作/补班）')
-      .addToggle((t) => t.setValue(this.config.showSunday !== false).onChange((v) => { this.config.showSunday = v; }));
-
-    new Setting(containerEl)
+      .setDesc('日历是否显示周日列（周日常需补班）')
+      .addToggle((t) => t.setValue(this.config.showSunday !== false).onChange((v) => this.persist({ showSunday: v })));
+    new Setting(subItems)
       .setName('显示节假日 / 调休补班')
-      .setDesc('按国务院放假安排标注休假日（红）与调休补班日（蓝），默认显示')
-      .addToggle((t) => t.setValue(this.config.showHolidays !== false).onChange((v) => { this.config.showHolidays = v; }));
+      .setDesc('按国务院安排标注休假日（红）与补班日（蓝）')
+      .addToggle((t) => t.setValue(this.config.showHolidays !== false).onChange((v) => this.persist({ showHolidays: v })));
+  }
 
-    // ===== Claude 会话 =====
-    const sessionCfg = { ...getSessionConfig() };
-    const sessionText: any = {};
+  // ===== 💬 会话（含各自智能体的技能注册） =====
+  private groupSession(): void {
+    const box = this.containerEl.createDiv({ cls: 'mswb-set-box' });
+    new Setting(box).setHeading().setName('💬 会话');
 
-    new Setting(containerEl).setHeading().setName('💬 Claude 会话');
+    // 次级：Claude Code
+    const subC = box.createDiv({ cls: 'mswb-set-sub' });
+    new Setting(subC).setHeading().setName('Claude Code');
+    const cItems = subC.createDiv({ cls: 'mswb-set-sub-items' });
 
-    new Setting(containerEl)
+    new Setting(cItems)
       .setName('会话目录')
       .setDesc('会话 .jsonl 根目录，默认 ~/.claude/projects')
-      .addText((t) => {
-        t.setValue(sessionCfg.sessionRootDir)
-          .setPlaceholder('C:\\Users\\xxx\\.claude\\projects')
-          .onChange((v) => { sessionText.sessionRootDir = v; });
-      });
-
-    new Setting(containerEl)
-      .setName('claude CLI 路径')
-      .setDesc('loop 起新会话用，留空自动检测')
-      .addText((t) => {
-        t.setValue(sessionCfg.claudeCliPath)
-          .setPlaceholder('claude')
-          .onChange((v) => { sessionText.claudeCliPath = v; });
-      });
-
-    new Setting(containerEl)
-      .setName('会话存档目录')
-      .setDesc('存档会话的存放路径，留空时默认 ~/.claude/archives（在 Claude 30 天清理范围外）')
-      .addText((t) => {
-        t.setValue(sessionCfg.archiveDir)
-          .setPlaceholder('留空使用默认路径')
-          .onChange((v) => { sessionText.archiveDir = v; });
-      });
-
-    // ===== CodeM 会话 =====
-    new Setting(containerEl).setHeading().setName('🏷 CodeM 会话');
-
-    new Setting(containerEl)
-      .setName('CodeM 会话目录')
-      .setDesc('CodeM 会话 .jsonl 根目录，默认 ~/.codem/sessions')
-      .addText((t) => {
-        t.setValue(sessionCfg.codemRootDir)
-          .setPlaceholder('C:\\Users\\xxx\\.codem\\sessions')
-          .onChange((v) => { sessionText.codemRootDir = v; });
-      });
-
-    new Setting(containerEl)
-      .setName('codem CLI 路径')
-      .setDesc('「在 CodeM 中打开」续接会话用，留空自动检测（codem）')
-      .addText((t) => {
-        t.setValue(sessionCfg.codemCliPath)
-          .setPlaceholder('codem')
-          .onChange((v) => { sessionText.codemCliPath = v; });
-      });
-
-    // ===== 收割技能 =====
-    new Setting(containerEl).setHeading().setName('🌾 收割技能');
-
-    new Setting(containerEl)
-      .setName('收割技能名')
-      .setDesc('会话「已收割」按此名单匹配。默认 session-harvest；用自己的收割 SKILL 名替换，多个用逗号分隔。留空 = 默认')
-      .addText((t) => {
-        t.setValue((sessionCfg.harvestSkillNames || ['session-harvest']).join(','))
-          .setPlaceholder('session-harvest')
-          .onChange((v) => { sessionText.harvestSkillNames = v.split(',').map((s) => s.trim()).filter(Boolean); });
-      });
-
-    new Setting(containerEl)
-      .setName('一键注册收割 SKILL')
-      .setDesc('把内置的通用「会话知识收割」模板写入本机技能目录（Claude Code ~/.claude/skills、CodeM ~/.agents/skills），无需手动拷贝。已有文件会自动备份为 .bak。登录态不影响，仅写本地文件')
-      .addButton((b) => b
-        .setButtonText('🤖 Claude Code')
-        .setCta()
-        .onClick(async () => {
-          const res = installHarvestSkill('claude');
-          const r = res[0];
-          new Notice(r.ok
-            ? (r.existed ? `✅ 已注册（原文件已备份为 .bak）: ${r.path}` : `✅ 已注册: ${r.path}`)
-            : `❌ 注册失败: ${r.error}`);
-        }))
-      .addButton((b) => b
-        .setButtonText('🏷 CodeM')
-        .setCta()
-        .onClick(async () => {
-          const res = installHarvestSkill('codem');
-          const r = res[0];
-          new Notice(r.ok
-            ? (r.existed ? `✅ 已注册（原文件已备份为 .bak）: ${r.path}` : `✅ 已注册: ${r.path}`)
-            : `❌ 注册失败: ${r.error}`);
-        }))
-      .addButton((b) => b
-        .setButtonText('🌐 都装')
-        .onClick(async () => {
-          const res = installHarvestSkill('both');
-          const okN = res.filter((r) => r.ok).length;
-          const err = res.filter((r) => !r.ok);
-          new Notice(err.length === 0
-            ? `✅ 已注册 ${okN} 处（已存在则备份 .bak）`
-            : `⚠️ 注册 ${okN} 处，失败 ${err.length} 处：${err[0].error}`);
-        }));
-
-    // ===== 飞书 =====
-    const feishuCfg = { ...getFeishuConfig() };
-    const feishuText: any = {};
-
-    new Setting(containerEl).setHeading().setName('📡 飞书');
-
-    new Setting(containerEl)
-      .setName('lark-cli 路径')
-      .setDesc('留空自动检测，失败时手动指定')
-      .addText((t) => {
-        t.setValue(feishuCfg.larkCliPath)
+      .addText((t) =>
+        t.setValue(getSessionConfig().sessionRootDir)
           .setPlaceholder('留空自动检测')
-          .onChange((v) => { feishuText.larkCliPath = v; });
-      });
+          .onChange((v) => void setSessionConfigDebounced('sessionRootDir', { sessionRootDir: v.trim() })));
 
-    new Setting(containerEl)
-      .setName('扫描文件夹上限')
-      .setDesc('深度扫描最多遍历的文件夹数（默认 100；云盘嵌套很深可调大，超出部分标为已达上限）')
-      .addText((t) => {
-        t.setValue(String(feishuCfg.scanFolderLimit ?? 100))
-          .setPlaceholder('100')
-          .onChange((v) => { feishuText.scanFolderLimit = parseInt(v, 10) || 100; });
-      });
+    new Setting(cItems)
+      .setName('claude CLI 路径')
+      .setDesc('起新会话用，留空自动检测')
+      .addText((t) =>
+        t.setValue(getSessionConfig().claudeCliPath)
+          .setPlaceholder('claude')
+          .onChange((v) => void setSessionConfigDebounced('claudeCliPath', { claudeCliPath: v.trim() })));
 
-    new Setting(containerEl)
-      .setName('扫描并发数')
-      .setDesc('同步文件夹时并发加载的批次大小（默认 5；文件夹多可调大到 8~10 提速，飞书接口限频时调小）')
-      .addText((t) => {
-        t.setValue(String(feishuCfg.scanConcurrency ?? 5))
-          .setPlaceholder('5')
-          .onChange((v) => { feishuText.scanConcurrency = parseInt(v, 10) || 5; });
-      });
+    new Setting(cItems)
+      .setName('会话存档目录')
+      .setDesc('存档存放位置，留空默认 ~/.claude/archives（清理范围外）')
+      .addText((t) =>
+        t.setValue(getSessionConfig().archiveDir)
+          .setPlaceholder('留空使用默认路径')
+          .onChange((v) => void setSessionConfigDebounced('archiveDir', { archiveDir: v.trim() })));
 
-    // ===== 操作按钮 =====
-    containerEl.createEl('hr');
+    // 收割技能名（claude 会话的「已收割」识别名单）
+    new Setting(cItems)
+      .setName('收割技能名')
+      .setDesc('会话「已收割」按此名单匹配，默认 session-harvest，多个用逗号分隔')
+      .addText((t) =>
+        t.setValue((getSessionConfig().harvestSkillNames || ['session-harvest']).join(','))
+          .setPlaceholder('session-harvest')
+          .onChange((v) => void setSessionConfigDebounced('harvestSkillNames', { harvestSkillNames: v.split(',').map((s) => s.trim()).filter(Boolean) })));
 
-    new Setting(containerEl)
-      .setName('保存设置')
-      .setDesc('所有改动一次性保存，需重载插件完全生效')
-      .addButton((b) => b
-        .setButtonText('💾 保存')
-        .setCta()
-        .onClick(async () => {
-          await setConfig(this.config);
-          await setSessionConfig({
-            sessionRootDir: sessionText.sessionRootDir ?? '',
-            claudeCliPath: sessionText.claudeCliPath ?? '',
-            archiveDir: sessionText.archiveDir ?? '',
-            codemRootDir: sessionText.codemRootDir ?? '',
-            codemCliPath: sessionText.codemCliPath ?? '',
-            harvestSkillNames: sessionText.harvestSkillNames || ['session-harvest'],
-          });
-          await setFeishuConfig({
-            larkCliPath: feishuText.larkCliPath ?? '',
-            scanFolderLimit: feishuText.scanFolderLimit ?? 100,
-            scanConcurrency: feishuText.scanConcurrency ?? 5,
-          });
-          this.config = { ...getConfig() };
-          this.display();
-        }));
+    // 技能注册：Claude Code 专属（只装 claude）
+    this.skillInstallRow(cItems, '会话知识收割', '「总结对话 → 归档为笔记」', 'claude', installHarvestSkill, hasHarvestSkill);
+    this.skillInstallRow(cItems, '工作复盘整理', '「整理日志 → 生成周报 / 月报」', 'claude', installWorkReportSkill, hasWorkReportSkill);
 
-    new Setting(containerEl)
-      .setName('恢复默认')
-      .setDesc('将所有配置恢复为默认值')
+    // 次级：CodeM
+    const subM = box.createDiv({ cls: 'mswb-set-sub' });
+    new Setting(subM).setHeading().setName('CodeM');
+    const mItems = subM.createDiv({ cls: 'mswb-set-sub-items' });
+
+    new Setting(mItems)
+      .setName('CodeM 会话目录')
+      .setDesc('默认 ~/.codem/sessions')
+      .addText((t) =>
+        t.setValue(getSessionConfig().codemRootDir)
+          .setPlaceholder('留空自动检测')
+          .onChange((v) => void setSessionConfigDebounced('codemRootDir', { codemRootDir: v.trim() })));
+
+    new Setting(mItems)
+      .setName('codem CLI 路径')
+      .setDesc('「在 CodeM 中打开」用，留空自动检测')
+      .addText((t) =>
+        t.setValue(getSessionConfig().codemCliPath)
+          .setPlaceholder('codem')
+          .onChange((v) => void setSessionConfigDebounced('codemCliPath', { codemCliPath: v.trim() })));
+
+    // 技能注册：CodeM 专属（只装 codem）
+    this.skillInstallRow(mItems, '会话知识收割', '「总结对话 → 归档为笔记」', 'codem', installHarvestSkill, hasHarvestSkill);
+    this.skillInstallRow(mItems, '工作复盘整理', '「整理日志 → 生成周报 / 月报」', 'codem', installWorkReportSkill, hasWorkReportSkill);
+  }
+
+  // ===== 技能注册行（单智能体单按钮） =====
+  private skillInstallRow(
+    parent: HTMLElement,
+    title: string,
+    desc: string,
+    agent: 'claude' | 'codem',
+    install: (a: 'claude' | 'codem' | 'both') => { ok: boolean; existed: boolean; path: string; error?: string }[],
+    has: (a: 'claude' | 'codem') => boolean,
+  ): void {
+    const agentName = agent === 'claude' ? 'Claude Code' : 'CodeM';
+    const installed = has(agent);
+    new Setting(parent)
+      .setName(title)
+      .setDesc(`${desc} · 装到 ${agentName}`)
       .addButton((b) => {
-        b.setButtonText('🔄 恢复默认');
-        // 1.7.2 无 setDestructive（1.13+ 才有）——用基础类模 red 表达危险操作，保持 minAppVersion 兼容
-        if ('setClass' in b && typeof b.setClass === 'function') b.setClass('mod-warning');
+        b.setButtonText(installed ? '✅ 已装' : `🛠 安装`).setCta();
         b.onClick(async () => {
-          await resetConfig();
-          await setSessionConfig({ sessionRootDir: '', claudeCliPath: '', archiveDir: '', codemRootDir: '', codemCliPath: '', harvestSkillNames: ['session-harvest'] });
-          await setFeishuConfig({ larkCliPath: '', scanFolderLimit: 100, scanConcurrency: 5 });
-          this.config = { ...getConfig() };
-          this.display();
+          const r = install(agent)[0];
+          new Notice(r.ok ? `✅ 已注册${r.existed ? '（已备份 .bak）' : ''}: ${r.path}` : `❌ ${r.error}`);
+          b.setButtonText('✅ 已装');
         });
       });
   }
 
+  // ===== 📡 飞书 =====
+  private groupFeishu(): void {
+    const box = this.containerEl.createDiv({ cls: 'mswb-set-box' });
+    new Setting(box).setHeading().setName('📡 飞书');
+
+    new Setting(box)
+      .setName('lark-cli 路径')
+      .setDesc('留空自动检测，失败时手动指定')
+      .addText((t) =>
+        t.setValue(getFeishuConfig().larkCliPath)
+          .setPlaceholder('留空自动检测')
+          .onChange((v) => void setFeishuConfigDebounced('larkCliPath', { larkCliPath: v.trim() })));
+
+    new Setting(box)
+      .setName('扫描文件夹上限')
+      .setDesc('深度扫描最多遍历文件夹数（默认 100）')
+      .addText((t) =>
+        t.setValue(String(getFeishuConfig().scanFolderLimit ?? 100))
+          .setPlaceholder('100')
+          .onChange((v) => void setFeishuConfig({ scanFolderLimit: parseInt(v, 10) || 100 })));
+
+    new Setting(box)
+      .setName('扫描并发数')
+      .setDesc('并行加载批次（默认 5，文件夹多可调大）')
+      .addText((t) =>
+        t.setValue(String(getFeishuConfig().scanConcurrency ?? 5))
+          .setPlaceholder('5')
+          .onChange((v) => void setFeishuConfig({ scanConcurrency: parseInt(v, 10) || 5 })));
+  }
+
+  // ===== 辅助渲染 =====
   private renderRoots(container: HTMLElement): void {
     container.empty();
     if (this.config.projectRoots.length === 0) {
@@ -355,6 +445,7 @@ export class WorkbenchSettingsTab extends PluginSettingTab {
       const btn = row.createEl('button', { text: '✕', cls: 'mswb-del-btn' });
       btn.addEventListener('click', () => {
         this.config.projectRoots.splice(i, 1);
+        this.persist({ projectRoots: [...this.config.projectRoots] });
         this.renderRoots(container);
       });
     }
