@@ -14,14 +14,24 @@
 
 | Tab | Name | What it does | Highlights |
 |------|------|--------------|------------|
-| 📅 | Calendar | Monthly grid with daily summaries and status; click to jump to or create a daily note | Mon–Sat grid, one-click note creation, inline status editing |
+| 📅 | Calendar | **Two views**: 日新 (monthly grid, daily summary + status) and 月异 (quarter month-cards + weekly cards with weekly-report tags & busy lights; month → daily view) | One-click daily note, inline status editing, weekly/monthly report **skeleton generation** from diary draft |
 | 📂 | Projects | Auto-scan project folders, two-dimensional categorization, card view | Auto-discovers projects, editable tags/categories, maintainable links |
 | ✅ | Todos | Aggregates `- [ ]` tasks from multiple sources; checking a box writes back to the source file | Groups by project, collapses completed items, skips template noise |
 | 📊 | Gantt | Gantt timeline, drag scheduling, multi-phase, milestones | Today line, phase bars, two-way README sync |
 | 📡 | Feishu | Feishu Wiki / Drive browsing, project categorization, link checks, smart meeting notes | Deep scan, auto-categorization, access stats, file moves |
-| 💬 | Sessions | Visualize Claude Code sessions, group by project, task workflow | Turn details, title editing, archiving, one-click resume |
+| 💬 | Sessions | Visualize Claude Code **and CodeM** sessions, group by project, archive & harvest status | Turn details, session archiving (out of 30-day cleanup scope), one-click resume, harvest marker |
 
-> 🖊 **Quick capture**: a bottom FAB offers "Diary / Todo" quick entry (not a separate panel).
+> 🖊 **Quick capture**: a bottom FAB offers "Diary / Todo / Project" quick entry (not a separate panel).
+
+---
+
+## Reports & Skills
+
+- **One-click weekly / monthly report skeleton** from the calendar: pick «📝 extract draft from diary» (auto-aggregate project tags + daily one-liners + status stats into `ai_summary`) or «🧱 empty skeleton (fill by hand)».
+- **Bundled skills, one-click install** from Settings → Sessions:
+  - `session-harvest` — summarize a conversation into vault notes
+  - `work-report` — keep local diary → generate weekly / monthly reports (fully local, no personal info bundled)
+  - Installs to `~/.claude/skills/` or `~/.agents/skills/`; existing files are backed up to `.bak`.
 
 ---
 
