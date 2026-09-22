@@ -1,5 +1,4 @@
 import { App, Modal, Setting, Notice, TFile, TFolder } from 'obsidian';
-import { getConfig } from '../data/settings';
 import { centerModalInWorkbench } from './modalHelpers';
 import { buildReportDraft, type ReportDraft } from '../data/reportDraft';
 
@@ -228,10 +227,10 @@ export class ReportCreateModal extends Modal {
       text: `将提取 ${d.logDays} 天 · ${d.total} 条日志，聚合 ${d.projects.length} 个项目：`,
       cls: 'mswb-modal-hint',
     });
-    const list = this.previewEl.createEl('ul');
-    list.style.margin = '4px 0 0';
+    const list = this.previewEl.createEl('ul', { cls: 'mswb-modal-draft-list' });
+    const listItemCls = 'mswb-modal-draft-item';
     for (const p of d.projects.slice(0, 6)) {
-      const li = list.createEl('li');
+      const li = list.createEl('li', { cls: listItemCls });
       li.setText(`${p.label}（${p.lines.length} 条）`);
     }
   }
@@ -278,8 +277,7 @@ export class ReportCreateModal extends Modal {
       });
 
     // 预览区
-    const preview = contentEl.createDiv({ cls: 'setting-item-description' });
-    preview.style.marginTop = '4px';
+    const preview = contentEl.createDiv({ cls: 'setting-item-description mswb-modal-preview' });
     this.previewEl = preview;
     this.renderPreview();
 

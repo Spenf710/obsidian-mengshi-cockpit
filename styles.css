@@ -1550,6 +1550,28 @@
   border-color: var(--interactive-accent);
 }
 
+.mswb-modal-preview {
+  min-height: 18px;
+  line-height: 1.5;
+}
+
+.mswb-modal-hint {
+  color: var(--text-muted);
+  font-size: 0.82em;
+  line-height: 1.5;
+}
+
+.mswb-modal-draft-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.mswb-modal-draft-item {
+  color: var(--text-normal);
+  font-size: 0.82em;
+  line-height: 1.6;
+}
+
 .mswb-modal-actions {
   display: flex;
   justify-content: flex-end;

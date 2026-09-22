@@ -141,7 +141,7 @@ export function WorkbenchApp({ app }: { app: App }) {
 }
 
 // ===== 日历面板 =====
-/** 日历视图粒度：month=日新视图（天粒度）、drawer=月异视图（季度月卡+选中月周卡联动） */
+/** 日历视图粒度：month=日新视图（月粒度日网格）、drawer=月异视图（季度月卡+选中月周卡联动；日历剩余月入口进入对应月日新视图） */
 type CalViewKind = 'month' | 'drawer';
 const CAL_VIEWS: { key: CalViewKind; label: string; icon: string; hint: string }[] = [
   { key: 'month', label: '日新', icon: '📅', hint: '日新视图（按天记录）' },
